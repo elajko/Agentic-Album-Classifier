@@ -13,11 +13,11 @@ const similarity_threshold = 0.8; // if a new label is not at least this similar
 /*
  * initialize
  */
-let schema = fs.existsSync("./schema.json") ? JSON.parse(fs.readFileSync("./schema.json", "utf8")) :
+const schema = fs.existsSync("./schema.json") ? JSON.parse(fs.readFileSync("./schema.json", "utf8")) :
 {   // schema template
     image_to_label: {}, // filename : label
     label_to_album: {}, // label    : album
-    albums: {}          // album    : bool (true if strict)
+    strict_albums:  []
 };
 
 if (!fs.existsSync("./db"))
@@ -38,12 +38,15 @@ function progress_callback(data) {
  * agent behaviour
  */
 
-// TODO adding a strict album just means adding album_name: album_name to label_to_album
-// TODO if a new album is created, we should try to reorganize other labels to see if they fit it more
+// TODO adding a strict album just means adding { album_name: album_name } to schema.label_to_album
 
 const dot = (x, y) => x.reduce((sum, val, index) => sum + val * y[index], 0);
 
 async function sort_label_into_album(label) {
+
+    /* This function tries to find an existing album that the label can be sorted into while
+     * honoring the similarity_threshold. If no such album exists, it creates a new one.
+     */
     
     let other_labels = Object.keys(schema.label_to_album);
     let other_embeddings = await get_label_embeddings([...other_labels, label]);
@@ -92,9 +95,9 @@ async function classify_image(filename) { // returns null on success, a string o
 
     schema.image_to_label[filename] = label;
 
-    // if this label hasn't been sorted into an album, try to find an existing album that fits
+    // if this label hasn't been sorted into an album, do that
     if (schema.label_to_album[label] == undefined)
-        sort_label_into_album(label);
+        await sort_label_into_album(label);
 
     // back-up schema to disk
     try {
@@ -109,6 +112,43 @@ async function classify_image(filename) { // returns null on success, a string o
 /*
  * web server
  */
+function get_index(result = "") {
+
+    const album_to_images = {};
+
+    for (const image of Object.keys(schema.image_to_label)) {
+
+        const album = schema.label_to_album[schema.image_to_label[image]];
+
+        if (album_to_images[album]) {
+            album_to_images[album].push(image);
+        } else {
+            album_to_images[album] = [ image ];
+        }
+    }
+
+    let construct = "";
+
+    for (const album of Object.keys(album_to_images)) {
+
+        construct += `<h2>${ album }</h2>`;
+
+        for (const image of album_to_images[album]) {
+
+            construct += `<img height="200" src="/img/${ image }">`;
+        }
+    }
+
+    return fs.readFileSync("./index.html", "utf8")
+    .replace(
+        `<div id="upload-result"></div>`,
+        result
+    )
+    .replace(
+        `<div id="browse-area"></div>`,
+        construct
+    );
+}
 
 // define the HTTP server that serves our frontend
 // no need for HTTPS since this is just a local demo
@@ -120,70 +160,84 @@ server.on("request", async (req, res) => {
 
     console.log(req_type);
 
-    res.setHeader("Content-Type", "text/html");
+    // respond
+    if (req_type.startsWith("GET /img/")) {
 
-    switch (req_type) {
-
-        case "GET /":
-
-            res.statusCode = 200;
-            res.end(fs.readFileSync("./index.html", "utf8"));
-            break;
-        
-        case "POST /upload":
-
-            if (!req.headers["content-type"].includes("multipart/form-data")) {
-
-                res.statusCode = 400;
-                res.end("Bad request; you're doing something weird, aren't you?");
-                break;
+        fs.readFile("./db/" + req.url.substring(5), (err, data) => {
+            
+            if (err) {
+                res.writeHead(404, { "Content-Type": "text/plain" });
+                res.end("Image not found");
+            } else {
+                res.writeHead(404, { "Content-Type": "image/" + req.url.substring(req.url.lastIndexOf(".") + 1).toLowerCase() });
+                res.end(data);
             }
+        });
+        
+    } else {
 
-            new formidable.IncomingForm().parse(req, (err, fields, files) => {
+        res.setHeader("Content-Type", "text/html");
 
-                if (err) {
-                    res.statusCode = 500;
-                    res.end("Server-side parsing error");
-                    return;
-                }
+        switch (req_type) {
 
-                if (!files.image[0].mimetype.includes("image/")) {
+            case "GET /":
+
+                res.statusCode = 200;
+                res.end(get_index());
+                break;
+            
+            case "POST /upload":
+
+                if (!req.headers["content-type"].includes("multipart/form-data")) {
+
                     res.statusCode = 400;
                     res.end("Bad request; you're doing something weird, aren't you?");
-                    return;
+                    break;
                 }
 
-                let new_filename = files.image[0].originalFilename;
+                new formidable.IncomingForm().parse(req, (err, fields, files) => {
 
-                // prevent collision
-                while (schema.image_to_label[new_filename] != undefined)
-                    new_filename = "_" + new_filename;
+                    if (err) {
+                        res.statusCode = 500;
+                        res.end("Server-side parsing error");
+                        return;
+                    }
 
-                // save image to db
-                fs.renameSync(files.image[0].filepath, "./db/" + new_filename);
+                    if (!files.image[0].mimetype.includes("image/")) {
+                        res.statusCode = 400;
+                        res.end("Bad request; you're doing something weird, aren't you?");
+                        return;
+                    }
 
-                // classify image
-                classify_image(new_filename).then((result) => {
+                    let new_filename = files.image[0].originalFilename;
 
-                    res.statusCode = 200;
-                    res.end(
-                        fs.readFileSync("./index.html", "utf8").replace(
-                            `<div id="upload-result"></div>`,
+                    // prevent collision
+                    while (schema.image_to_label[new_filename] != undefined)
+                        new_filename = "_" + new_filename;
+
+                    // save image to db
+                    fs.renameSync(files.image[0].filepath, "./db/" + new_filename);
+
+                    // classify image
+                    classify_image(new_filename).then((result) => {
+
+                        res.statusCode = 200;
+                        res.end(get_index(
                             result
                             ? `<div id="upload-result" style="color: red;">Upload failed: ${ result }</div>`
                             : `<div id="upload-result" style="color: green;">Upload succeeded!</div>`
-                        )
-                    );
+                        ));
+                    });
                 });
-            });
 
-            break;
-        
-        default:
+                break;
+            
+            default:
 
-            res.statusCode = 404;
-            res.end("Not found");
-            break;
+                res.statusCode = 404;
+                res.end("Not found");
+                break;
+        }
     }
 });
 
