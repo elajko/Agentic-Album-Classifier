@@ -86,6 +86,7 @@
 <body onload="document.getElementById(active_album_id).style.display = 'block';">
     <header>
         <select onchange="changeAlbumTo(this.value)">
+            <option value="home">Home</option>
             <album-options/>
         </select>
 
@@ -100,7 +101,8 @@
     <div id="browse-area">
         <div id="home" style="display: none;">
             <h1>Welcome to your gallery!</h1>
-            <p>Select albums from the dropdown in the top-left.</p>
+            <p>To get started, upload your first image using the file upload at the top of the page.</p>
+            <p>Uploaded images are sorted into albums automatically, which you can select from using the dropdown in the top-left.</p>
         </div>
         <albums/>
     </div>
