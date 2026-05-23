@@ -20,7 +20,7 @@ would be necessary if albums were represented as directories).
 
 - [x] Image uploading
 - [x] Classifying images with a label
-- [ ] Sorting images into albums based on their label
+- [x] Sorting images into albums based on their label
 - [ ] Image/album browsing
 - [ ] "Strict" albums
 
