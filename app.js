@@ -93,7 +93,7 @@ function get_index(result = "", active_album_id = "home") {
 
         let uppercase_label = label.at(0).toUpperCase() + label.substring(1);
 
-        albums_construct += `<option value="album-${ label }">${ uppercase_label }</option>`;
+        albums_construct += `<option value="album-${ label }"${ "album-" + label == active_album_id ? " selected" : "" }>${ uppercase_label }</option>`;
 
         browse_construct += `<div id="album-${ label }" style="display: none;"><h2>${ uppercase_label }</h2><div class="gallery">`;
 
