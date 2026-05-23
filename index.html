@@ -73,7 +73,7 @@
     </style>
     <script>
 
-        let active_album_id = "home";
+        let active_album_id = "<ACTIVE_ALBUM_ID/>";
 
         function changeAlbumTo(value) {
             
@@ -83,7 +83,7 @@
         }
     </script>
 </head>
-<body>
+<body onload="document.getElementById(active_album_id).style.display = 'block';">
     <header>
         <select onchange="changeAlbumTo(this.value)">
             <album-options/>
@@ -98,7 +98,7 @@
         <div id="upload-result"></div>
     </header>
     <div id="browse-area">
-        <div id="home">
+        <div id="home" style="display: none;">
             <h1>Welcome to your gallery!</h1>
             <p>Select albums from the dropdown in the top-left.</p>
         </div>

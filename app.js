@@ -44,7 +44,7 @@ let classifier = pipeline("zero-shot-image-classification", config.classificatio
  * agent behaviour
  */
 
-async function classify_image(filename) {
+async function classify_image(filename) { // returns the label it classified into
 
     if (classifier instanceof Promise)
         classifier = await classifier;
@@ -64,12 +64,14 @@ async function classify_image(filename) {
     } catch (err) {
         console.error("Error backing up schema: ", err);
     }
+
+    return label;
 }
 
 /*
  * web server
  */
-function get_index(result = "") {
+function get_index(result = "", active_album_id = "home") {
 
     const label_to_images = {};
 
@@ -89,9 +91,11 @@ function get_index(result = "") {
 
     for (const label of Object.keys(label_to_images)) {
 
-        albums_construct += `<option value="album-${ label }">${ label }</option>`;
+        let uppercase_label = label.at(0).toUpperCase() + label.substring(1);
 
-        browse_construct += `<div id="album-${ label }" style="display: none;"><h2>${ label }</h2><div class="gallery">`;
+        albums_construct += `<option value="album-${ label }">${ uppercase_label }</option>`;
+
+        browse_construct += `<div id="album-${ label }" style="display: none;"><h2>${ uppercase_label }</h2><div class="gallery">`;
 
         for (const image of label_to_images[label]) {
 
@@ -112,6 +116,10 @@ function get_index(result = "") {
     .replace(
         `<div id="upload-result"></div>`,
         result
+    )
+    .replace(
+        "<ACTIVE_ALBUM_ID/>",
+        active_album_id
     )
     .replace(
         "<album-options/>",
@@ -196,10 +204,10 @@ server.on("request", async (req, res) => {
                     fs.renameSync(files.image[0].filepath, "./db/" + new_filename);
 
                     // classify image
-                    classify_image(new_filename).then(() => {
+                    classify_image(new_filename).then((label) => {
 
                         res.statusCode = 200;
-                        res.end(get_index(`<div id="upload-result" style="color: green;">Upload succeeded!</div>`));
+                        res.end(get_index(`<div id="upload-result" style="color: green;">Upload succeeded!</div>`, "album-" + label));
                     });
                 });
 
