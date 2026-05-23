@@ -6,18 +6,17 @@ minimalist, function-first design principles.
 
 ## Design
 
-The AI is given the high-level goal of independently organizing a dynamic image gallery. It individually assigns to each image
-a label, grouping together images with related (but not necessarily identical) labels into albums, and creating/removing albums
-as necessary, all without human guidance.
+The AI is given the high-level goal of independently organizing a dynamic image gallery. It individually assigns to each image a
+label, grouping together images with related (but not necessarily identical) labels into albums, and creating/removing albums as
+necessary, all without human guidance. When a new album is created, the AI reevaluates existing images to see if they fit into the
+new album more, reorganizing accordingly.
 
 A human user may create "strict" albums that the AI cannot remove or rename (but can still sort images into); the AI will take strict 
 albums into account when creating its organization schema.
 
-When a new album is created, the AI reevaluates existing images to see if they fit into the new album more, reorganizing accordingly.
-It will also attempt to merge albums that are excessively similar (strict albums takes precedence, and two strict albums are never merged).
-
-The AI maintains a single "schema.json" file that prevents unnecessary processing from reclassification and moving files (that
-would be necessary if albums were represented as directories). An album is deleted when it no longer has any labels that resolve to it, *unless* it's strict.
+The AI maintains a single "schema.json" file that prevents unnecessary processing from reclassification and moving files (that would
+be necessary if albums were represented as directories). An album is deleted when it no longer has any labels that resolve to it,
+*unless* it's strict.
 
 ## Features
 
@@ -25,6 +24,7 @@ would be necessary if albums were represented as directories). An album is delet
 - [x] Classifying images with a label
 - [x] Sorting images into albums based on their label
 - [x] Image/album browsing
+- [ ] Agentic image reevaluation on album creation
 - [ ] "Strict" albums
 
 ## Installation
