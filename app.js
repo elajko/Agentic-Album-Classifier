@@ -3,17 +3,22 @@ const formidable = require("formidable");
 const { pipeline, env } = require("@huggingface/transformers");
 
 /*
- * configuration (TODO move this to an external config.json)
- */
-const hostname = "127.0.0.1";
-const port = 3000;
-
-const classification_threshold = 0.7;                        // if an image does not get labeled with at least this confidence, create a new label
-const classification_model = "Xenova/clip-vit-base-patch32"; // https://huggingface.co/models?pipeline_tag=image-classification&library=transformers.js
-
-/*
  * initialize
  */
+if (!fs.existsSync("./config.json")) {
+
+    // generate config.json from template if it does not exist
+
+    fs.writeFileSync("./config.json", JSON.stringify({
+        hostname: "127.0.0.1",
+        port: 3000,
+        classification_threshold: 0.7,
+        classification_model: "Xenova/clip-vit-base-patch32"
+    }, null, 4));
+}
+
+const config = JSON.parse(fs.readFileSync("./config.json", "utf8"));
+
 const schema = fs.existsSync("./schema.json") ? JSON.parse(fs.readFileSync("./schema.json", "utf8")) :
 {   // schema template
     image_to_label: {},
@@ -33,7 +38,7 @@ function progress_callback(data) {
         console.log(`Finished loading: ${data.file}`);
 }
 
-let classifier = pipeline("zero-shot-image-classification", classification_model, { progress_callback });
+let classifier = pipeline("zero-shot-image-classification", config.classification_model, { progress_callback });
 
 /*
  * agent behaviour
@@ -44,11 +49,14 @@ async function classify_image(filename) {
     if (classifier instanceof Promise)
         classifier = await classifier;
 
-    const label = (await classifier("./db/" + filename, schema.possible_labels))[0].label;
+    const { label, score } = (await classifier("./db/" + filename, schema.possible_labels))[0];
 
     // TODO account for confidence and classification_threshold, creating a new label as necessary
 
     schema.image_to_label[filename] = label;
+
+    // console.log(`Sorted '${ filename }' into a new album '${ _ }' (best existing was ${ label } with ${ Math.floor(score * 100.0) }% confidence).`);
+    console.log(`Sorted '${ filename }' into album '${ label }' (${ Math.floor(score * 100.0) }% confidence).`);
 
     // back-up schema to disk
     try {
@@ -107,7 +115,7 @@ server.on("request", async (req, res) => {
 
     const req_type = req.method + " " + req.url;
 
-    console.log(req_type);
+    // console.log(req_type);
 
     // respond
     if (req_type.startsWith("GET /img/")) {
@@ -190,6 +198,6 @@ server.on("request", async (req, res) => {
     }
 });
 
-server.listen(port, hostname, () => {
-    console.log(`Server running at http://${hostname}:${port}/`);
+server.listen(config.port, config.hostname, () => {
+    console.log(`Server running at http://${ config.hostname }:${ config.port }/`);
 });

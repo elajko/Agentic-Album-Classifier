@@ -11,10 +11,10 @@ be necessary if albums were represented as directories). An album is deleted whe
 
 - [x] Image uploading
 - [x] Image/album browsing
+- [x] Configuration file (for both server and classification settings)
 - [x] Classifying images into an album
 - [ ] Agentic album creation when an image is added that doesn't fit nicely into existing albums
 - [ ] Agentic image reevaluation when a new album is created
-- [ ] Configuration file (for both server and classification)
 - [ ] Allow the user to optionally provide their own albums
 
 ## Installation
@@ -38,3 +38,19 @@ cd Agentic-Album-Classifier
 ```
 node app.js
 ```
+
+## Configuration
+
+A `config.json` file is automatically generated the first time you start the node server. It contains the following key-value pairs:
+
+#### 'hostname' (default: "127.0.0.1")
+
+#### 'port' (default: 3000)
+
+#### 'classification_threshold' (default: 0.7)
+
+If an image does not get labeled with at least this confidence, create a new label.
+
+#### 'classification_model' (default: ["Xenova/clip-vit-base-patch32"](https://huggingface.co/Xenova/clip-vit-base-patch32))
+
+The zero-shot image classification model; browse models [here](https://huggingface.co/models?pipeline_tag=image-classification&library=transformers.js).
