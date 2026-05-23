@@ -3,21 +3,21 @@ const formidable = require("formidable");
 const { pipeline, env } = require("@huggingface/transformers");
 
 /*
- * configuration
+ * configuration (TODO move this to an external config.json)
  */
 const hostname = "127.0.0.1";
 const port = 3000;
 
-const similarity_threshold = 0.8; // if a new label is not at least this similar to a pre-existing label, generate a new album
+const classification_threshold = 0.7;                        // if an image does not get labeled with at least this confidence, create a new label
+const classification_model = "Xenova/clip-vit-base-patch32"; // https://huggingface.co/models?pipeline_tag=image-classification&library=transformers.js
 
 /*
  * initialize
  */
 const schema = fs.existsSync("./schema.json") ? JSON.parse(fs.readFileSync("./schema.json", "utf8")) :
 {   // schema template
-    image_to_label: {}, // filename : label
-    label_to_album: {}, // label    : album
-    strict_albums:  []
+    image_to_label: {},
+    possible_labels: ["bird", "tree", "comic"] // albums are internally called labels
 };
 
 if (!fs.existsSync("./db"))
@@ -27,77 +27,28 @@ env.cacheDir = "./model"; // make the cache directory local for tidiness
 
 function progress_callback(data) {
 
-    if (data.status === "progress") {
+    if (data.status === "progress")
         console.log(`Downloading ${data.file}: ${data.progress.toFixed(2)}%`);
-    } else if (data.status === "done") {
+    else if (data.status === "done")
         console.log(`Finished loading: ${data.file}`);
-    }
 }
+
+let classifier = pipeline("zero-shot-image-classification", classification_model, { progress_callback });
 
 /*
  * agent behaviour
  */
 
-// TODO adding a strict album just means adding { album_name: album_name } to schema.label_to_album
+async function classify_image(filename) {
 
-const dot = (x, y) => x.reduce((sum, val, index) => sum + val * y[index], 0);
+    if (classifier instanceof Promise)
+        classifier = await classifier;
 
-async function sort_label_into_album(label) {
+    const label = (await classifier("./db/" + filename, schema.possible_labels))[0].label;
 
-    /* This function tries to find an existing album that the label can be sorted into while
-     * honoring the similarity_threshold. If no such album exists, it creates a new one.
-     */
-    
-    let other_labels = Object.keys(schema.label_to_album);
-    let other_embeddings = await get_label_embeddings([...other_labels, label]);
-
-    let embedding = other_embeddings.pop();
-    
-    let best_label = null;
-    let best_similarity = 0.0;
-
-    // find other label most similar to this one
-    for (let i = 0; i < other_labels.length; i++) {
-
-        // calculate similarity (cosine similarity for normalized vectors is just the dot product)
-        let similarity = dot(embedding, other_embeddings[i]);
-
-        if (similarity > best_similarity) {
-
-            best_label = other_labels[i];
-            best_similarity = similarity;
-        }
-    }
-
-    if (best_similarity < similarity_threshold) {
-
-        // if none are similar enough (based on similarity_threshold), create a new album (with this label as the name)
-        schema.label_to_album[label] = label;
-
-    } else {
-
-        // otherwise, put this label in the same album as the most similar other label
-        schema.label_to_album[label] = schema.label_to_album[best_label];
-    }
-}
-
-async function get_label_embeddings(labels) {
-
-    const extractor = await pipeline("feature-extraction", null, { progress_callback });
-
-    return (await extractor(labels, { pooling: "mean", normalize: true })).tolist();
-}
-
-async function classify_image(filename) { // returns null on success, a string on error
-
-    const classifier = await pipeline("image-classification", null, { progress_callback });
-    const label = (await classifier("./db/" + filename))[0].label;
+    // TODO account for confidence and classification_threshold, creating a new label as necessary
 
     schema.image_to_label[filename] = label;
-
-    // if this label hasn't been sorted into an album, do that
-    if (schema.label_to_album[label] == undefined)
-        await sort_label_into_album(label);
 
     // back-up schema to disk
     try {
@@ -105,8 +56,6 @@ async function classify_image(filename) { // returns null on success, a string o
     } catch (err) {
         console.error("Error backing up schema: ", err);
     }
-
-    return null;
 }
 
 /*
@@ -114,26 +63,26 @@ async function classify_image(filename) { // returns null on success, a string o
  */
 function get_index(result = "") {
 
-    const album_to_images = {};
+    const label_to_images = {};
 
     for (const image of Object.keys(schema.image_to_label)) {
 
-        const album = schema.label_to_album[schema.image_to_label[image]];
+        const label = schema.image_to_label[image];
 
-        if (album_to_images[album]) {
-            album_to_images[album].push(image);
+        if (label_to_images[label]) {
+            label_to_images[label].push(image);
         } else {
-            album_to_images[album] = [ image ];
+            label_to_images[label] = [ image ];
         }
     }
 
     let construct = "";
 
-    for (const album of Object.keys(album_to_images)) {
+    for (const label of Object.keys(label_to_images)) {
 
-        construct += `<h2>${ album }</h2>`;
+        construct += `<h2>${ label }</h2>`;
 
-        for (const image of album_to_images[album]) {
+        for (const image of label_to_images[label]) {
 
             construct += `<img height="200" src="/img/${ image }">`;
         }
@@ -186,26 +135,30 @@ server.on("request", async (req, res) => {
                 res.end(get_index());
                 break;
             
-            case "POST /upload":
+            case "POST /":
 
                 if (!req.headers["content-type"].includes("multipart/form-data")) {
 
                     res.statusCode = 400;
-                    res.end("Bad request; you're doing something weird, aren't you?");
+                    res.end(get_index(`<div id="upload-result" style="color: red;">POST request content was the wrong type; you're doing something weird, aren't you?</div>`));
                     break;
                 }
 
                 new formidable.IncomingForm().parse(req, (err, fields, files) => {
 
                     if (err) {
+
+                        // TODO check if the error is because no file was sent
+
                         res.statusCode = 500;
-                        res.end("Server-side parsing error");
+                        res.end(get_index(`<div id="upload-result" style="color: red;">Upload failed: Server-side parsing error</div>`));
                         return;
                     }
 
                     if (!files.image[0].mimetype.includes("image/")) {
+
                         res.statusCode = 400;
-                        res.end("Bad request; you're doing something weird, aren't you?");
+                        res.end(get_index(`<div id="upload-result" style="color: red;">Server received a file other than an image; you're doing something weird, aren't you?</div>`));
                         return;
                     }
 
@@ -219,14 +172,10 @@ server.on("request", async (req, res) => {
                     fs.renameSync(files.image[0].filepath, "./db/" + new_filename);
 
                     // classify image
-                    classify_image(new_filename).then((result) => {
+                    classify_image(new_filename).then(() => {
 
                         res.statusCode = 200;
-                        res.end(get_index(
-                            result
-                            ? `<div id="upload-result" style="color: red;">Upload failed: ${ result }</div>`
-                            : `<div id="upload-result" style="color: green;">Upload succeeded!</div>`
-                        ));
+                        res.end(get_index(`<div id="upload-result" style="color: green;">Upload succeeded!</div>`));
                     });
                 });
 
@@ -244,7 +193,3 @@ server.on("request", async (req, res) => {
 server.listen(port, hostname, () => {
     console.log(`Server running at http://${hostname}:${port}/`);
 });
-
-// load the models now so that we don't slow down the first request
-pipeline("feature-extraction", null, { progress_callback });
-pipeline("image-classification", null, { progress_callback });
