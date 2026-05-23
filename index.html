@@ -3,15 +3,106 @@
 <head>
     <meta charset="UTF-8">
     <title>Agentic Album Classifier Demo</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Google+Sans:ital,opsz,wght@0,17..18,400..700;1,17..18,400..700&family=PT+Sans+Narrow:wght@400;700&display=swap');
+
+        body {
+            font-family: "Google Sans", sans-serif; margin: 0;
+        }
+
+        h1, h2 {
+            font-family: "PT Sans Narrow", sans-serif;
+        }
+
+        h1 {
+            font-size: 3em;
+        }
+
+        h2 {
+            border-bottom: 1px solid #ccc; font-weight: 400; font-size: 1.8em;
+        }
+
+        .image-cel {
+            color: grey;
+            margin: 0;
+        }
+
+        .image-cel div {
+            aspect-ratio: 1.618; width: 100%; border-radius: 4px; overflow: hidden;
+        }
+
+        .image-cel img {
+            object-fit: cover; width: 100%; height: 100%;
+        }
+
+        .image-cel figcaption {
+            padding-top: 0.5em; font-size: 0.8em;
+        }
+
+        .gallery {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(min(33%, 300px), 1fr)); gap: 1rem;
+        }
+
+        header {
+            position: sticky; top: 0; display: flex; gap: 1em; align-items: center; background: white; padding: 1em;
+        }
+
+        #browse-area {
+            padding: 0 2em 4em;
+        }
+
+        #upload-result {
+            font-size: 0.8em;
+        }
+
+        select, button, input[type="file"]::file-selector-button {
+            background: #e2e2e2; padding: 0.5em 1em; border: 0; border-radius: 4px; cursor: pointer; font-family: inherit;
+        }
+
+        button:hover, input[type="file"]::file-selector-button:hover {
+            filter: brightness(90%);
+        }
+
+        button[type="submit"] {
+            background: #ff42ba; font-weight: 700; color: white;
+        }
+
+        .separator {
+            height: 2em; border-left: 1px solid #ccc;
+        }
+    </style>
+    <script>
+
+        let active_album_id = "home";
+
+        function changeAlbumTo(value) {
+            
+            document.getElementById(active_album_id).style.display = "none";
+            active_album_id = value;
+            document.getElementById(active_album_id).style.display = "block";
+        }
+    </script>
 </head>
 <body>
-    <p>TODO: Allow the user to browse the albums; make it look pretty!</p>
+    <header>
+        <select onchange="changeAlbumTo(this.value)">
+            <album-options/>
+        </select>
 
-    <form action="/" method="POST" enctype="multipart/form-data">
-        <input type="file" name="image" accept="image/*">
-        <button type="submit">Upload</button>
-    </form>
-    <div id="upload-result"></div>
-    <div id="browse-area"></div>
+        <div class="separator"></div>
+
+        <form action="/" method="POST" enctype="multipart/form-data">
+            <input type="file" name="image" accept="image/*">
+            <button type="submit">Upload</button>
+        </form>
+        <div id="upload-result"></div>
+    </header>
+    <div id="browse-area">
+        <div id="home">
+            <h1>Welcome to your gallery!</h1>
+            <p>Select albums from the dropdown in the top-left.</p>
+        </div>
+        <albums/>
+    </div>
 </body>
 </html>

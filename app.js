@@ -84,16 +84,28 @@ function get_index(result = "") {
         }
     }
 
-    let construct = "";
+    let albums_construct = "";
+    let browse_construct = "";
 
     for (const label of Object.keys(label_to_images)) {
 
-        construct += `<h2>${ label }</h2>`;
+        albums_construct += `<option value="album-${ label }">${ label }</option>`;
+
+        browse_construct += `<div id="album-${ label }" style="display: none;"><h2>${ label }</h2><div class="gallery">`;
 
         for (const image of label_to_images[label]) {
 
-            construct += `<img height="200" src="/img/${ image }">`;
+            browse_construct += `
+                <figure class="image-cel">
+                    <div>
+                        <img src="/img/${ image }">
+                    </div>
+                    <figcaption>${ image }</figcaption>
+                </figure>
+            `;
         }
+
+        browse_construct += "</div></div>";
     }
 
     return fs.readFileSync("./index.html", "utf8")
@@ -102,8 +114,12 @@ function get_index(result = "") {
         result
     )
     .replace(
-        `<div id="browse-area"></div>`,
-        construct
+        "<album-options/>",
+        albums_construct
+    )
+    .replace(
+        `<albums/>`,
+        browse_construct
     );
 }
 
