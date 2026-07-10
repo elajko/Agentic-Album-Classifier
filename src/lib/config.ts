@@ -13,6 +13,8 @@ export interface AppConfig {
   reevaluationMargin: number;
   /** Cap on how many borderline images get reevaluated per newly created album, to bound request latency. */
   maxReevaluationsPerRun: number;
+  /** Cap on how many Unclassified images get drained per sweep, to bound request latency. */
+  maxSweepPerRun: number;
 }
 
 function envFloat(name: string, fallback: number): number {
@@ -39,5 +41,6 @@ export function getConfig(): AppConfig {
     classificationThreshold: envFloat("CLASSIFICATION_THRESHOLD", 0.7),
     reevaluationMargin: envFloat("REEVALUATION_MARGIN", 0.15),
     maxReevaluationsPerRun: envInt("MAX_REEVALUATIONS_PER_RUN", 12),
+    maxSweepPerRun: envInt("MAX_SWEEP_PER_RUN", 8),
   };
 }

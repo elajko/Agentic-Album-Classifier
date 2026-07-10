@@ -114,6 +114,7 @@ header {
 select,
 button,
 input[type="text"],
+input[type="password"],
 textarea,
 input[type="file"]::file-selector-button {
   background: #e2e2e2;
@@ -126,10 +127,31 @@ input[type="file"]::file-selector-button {
 }
 
 input[type="text"],
+input[type="password"],
 textarea {
   cursor: text;
   border: 1px solid #ddd;
   background: white;
+}
+
+.ai-badge {
+  font-size: 0.8em;
+  font-weight: 700;
+}
+
+.ai-badge.connected {
+  background: #d9f2e1;
+  color: #1b8a3d;
+}
+
+.ai-badge.disconnected {
+  background: #f2e6d9;
+  color: #8a5a1b;
+}
+
+.empty-state a {
+  color: var(--pink);
+  text-decoration: underline;
 }
 
 button:hover,

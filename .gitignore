@@ -19,14 +19,24 @@
 # misc
 .DS_Store
 *.pem
+*.key
+*.p12
+*.pfx
+*.crt
+credentials.json
+secrets.json
+*.secret
 
 # debug
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+*.log
 
-# local env files
-.env*.local
+# env files - all of them, not just .local; only .env.example is meant to be committed
+.env
+.env.*
+!.env.example
 
 # vercel
 .vercel
@@ -34,3 +44,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# there is no local image/db directory in this app by design - uploads and schema.json live in
+# Vercel Blob storage (see src/lib/store.ts), never on local/serverless disk - but these are
+# ignored defensively in case a local dev fallback is ever added
+/db/
+/model/
+/schema.json
+/config.json

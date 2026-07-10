@@ -1,3 +1,6 @@
+/** Reserved album that catches uploads made while no AI provider key is connected. */
+export const UNCLASSIFIED_ALBUM = "unclassified";
+
 export interface Album {
   /** Slug used as the stable key (lowercase, hyphenated). */
   name: string;

@@ -5,9 +5,12 @@ import type {
   ApiErrorResponse,
   CreateAlbumResponse,
   SchemaResponse,
+  StatusResponse,
+  SweepResponse,
   UploadResponse,
 } from "@/lib/api-types";
 import type { Album, ImageRecord } from "@/lib/types";
+import { UNCLASSIFIED_ALBUM } from "@/lib/types";
 
 type StatusMessage = { kind: "success" | "error"; text: string };
 
@@ -15,12 +18,20 @@ const HOME = "home";
 
 export default function AlbumApp() {
   const [schema, setSchema] = useState<SchemaResponse | null>(null);
+  const [aiStatus, setAiStatus] = useState<StatusResponse | null>(null);
   const [activeAlbum, setActiveAlbum] = useState<string>(HOME);
   const [uploading, setUploading] = useState(false);
-  const [status, setStatus] = useState<StatusMessage | null>(null);
+  const [message, setMessage] = useState<StatusMessage | null>(null);
+
   const [dialogOpen, setDialogOpen] = useState(false);
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const [adminDialogOpen, setAdminDialogOpen] = useState(false);
+  const adminDialogRef = useRef<HTMLDialogElement | null>(null);
+  const [adminPassword, setAdminPassword] = useState("");
+  const [adminApiKey, setAdminApiKey] = useState("");
+  const [adminBusy, setAdminBusy] = useState(false);
 
   const loadSchema = useCallback(async () => {
     const res = await fetch("/api/images", { cache: "no-store" });
@@ -28,9 +39,16 @@ export default function AlbumApp() {
     setSchema(data);
   }, []);
 
+  const loadStatus = useCallback(async () => {
+    const res = await fetch("/api/admin/status", { cache: "no-store" });
+    const data: StatusResponse = await res.json();
+    setAiStatus(data);
+  }, []);
+
   useEffect(() => {
     loadSchema();
-  }, [loadSchema]);
+    loadStatus();
+  }, [loadSchema, loadStatus]);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -38,6 +56,13 @@ export default function AlbumApp() {
     if (dialogOpen && !dialog.open) dialog.showModal();
     if (!dialogOpen && dialog.open) dialog.close();
   }, [dialogOpen]);
+
+  useEffect(() => {
+    const dialog = adminDialogRef.current;
+    if (!dialog) return;
+    if (adminDialogOpen && !dialog.open) dialog.showModal();
+    if (!adminDialogOpen && dialog.open) dialog.close();
+  }, [adminDialogOpen]);
 
   const albums = useMemo(() => {
     if (!schema) return [];
@@ -60,12 +85,12 @@ export default function AlbumApp() {
     e.preventDefault();
     const file = fileInputRef.current?.files?.[0];
     if (!file) {
-      setStatus({ kind: "error", text: "Choose an image first." });
+      setMessage({ kind: "error", text: "Choose an image first." });
       return;
     }
 
     setUploading(true);
-    setStatus(null);
+    setMessage(null);
 
     try {
       const formData = new FormData();
@@ -75,22 +100,24 @@ export default function AlbumApp() {
       const data: UploadResponse | ApiErrorResponse = await res.json();
 
       if (!res.ok || !("ok" in data)) {
-        setStatus({ kind: "error", text: (data as ApiErrorResponse).error ?? "Upload failed." });
+        setMessage({ kind: "error", text: (data as ApiErrorResponse).error ?? "Upload failed." });
         return;
       }
 
-      await loadSchema();
+      await Promise.all([loadSchema(), loadStatus()]);
       setActiveAlbum(data.label);
-      setStatus({
+      setMessage({
         kind: "success",
-        text: data.createdNewAlbum
-          ? `Upload succeeded! No existing album fit, so a new album was created for it.`
-          : `Upload succeeded! Filed into an existing album.`,
+        text: !data.classified
+          ? "Upload succeeded! AI classification is disconnected, so it was filed under Unclassified."
+          : data.createdNewAlbum
+            ? "Upload succeeded! No existing album fit, so a new album was created for it."
+            : "Upload succeeded! Filed into an existing album.",
       });
 
       if (fileInputRef.current) fileInputRef.current.value = "";
     } catch {
-      setStatus({ kind: "error", text: "Upload failed: network error." });
+      setMessage({ kind: "error", text: "Upload failed: network error." });
     } finally {
       setUploading(false);
     }
@@ -112,7 +139,7 @@ export default function AlbumApp() {
     const data: CreateAlbumResponse | ApiErrorResponse = await res.json();
 
     if (!res.ok || !("ok" in data)) {
-      setStatus({ kind: "error", text: (data as ApiErrorResponse).error ?? "Could not create album." });
+      setMessage({ kind: "error", text: (data as ApiErrorResponse).error ?? "Could not create album." });
       return;
     }
 
@@ -120,7 +147,7 @@ export default function AlbumApp() {
     setActiveAlbum(data.name);
     setDialogOpen(false);
     form.reset();
-    setStatus({
+    setMessage({
       kind: "success",
       text:
         data.moved.length > 0
@@ -134,12 +161,111 @@ export default function AlbumApp() {
     const data: { ok: true } | ApiErrorResponse = await res.json();
 
     if (!res.ok || !("ok" in data)) {
-      setStatus({ kind: "error", text: (data as ApiErrorResponse).error ?? "Could not delete album." });
+      setMessage({ kind: "error", text: (data as ApiErrorResponse).error ?? "Could not delete album." });
       return;
     }
 
     setActiveAlbum(HOME);
     await loadSchema();
+  }
+
+  async function handleConnect() {
+    if (!adminPassword || !adminApiKey) {
+      setMessage({ kind: "error", text: "Enter both the admin password and an API key." });
+      return;
+    }
+
+    setAdminBusy(true);
+    try {
+      const res = await fetch("/api/admin/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adminSecret: adminPassword, apiKey: adminApiKey }),
+      });
+      const data: SweepResponse | ApiErrorResponse = await res.json();
+
+      if (!res.ok || !("ok" in data)) {
+        setMessage({ kind: "error", text: (data as ApiErrorResponse).error ?? "Could not connect." });
+        return;
+      }
+
+      setAdminPassword("");
+      setAdminApiKey("");
+      setAdminDialogOpen(false);
+      await Promise.all([loadStatus(), loadSchema()]);
+      setMessage({
+        kind: "success",
+        text:
+          data.remaining > 0
+            ? `Connected. Sorted ${data.processed} unclassified image(s); ${data.remaining} left in the queue.`
+            : data.processed > 0
+              ? `Connected. Sorted all ${data.processed} unclassified image(s).`
+              : "Connected.",
+      });
+    } catch {
+      setMessage({ kind: "error", text: "Network error while connecting." });
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
+  async function handleDisconnect() {
+    if (!adminPassword) {
+      setMessage({ kind: "error", text: "Enter the admin password first." });
+      return;
+    }
+
+    setAdminBusy(true);
+    try {
+      const res = await fetch("/api/admin/connect", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adminSecret: adminPassword }),
+      });
+      const data: { ok: true } | ApiErrorResponse = await res.json();
+
+      if (!res.ok || !("ok" in data)) {
+        setMessage({ kind: "error", text: (data as ApiErrorResponse).error ?? "Could not disconnect." });
+        return;
+      }
+
+      setAdminPassword("");
+      setAdminDialogOpen(false);
+      await loadStatus();
+      setMessage({ kind: "success", text: "Disconnected. New uploads will go to Unclassified." });
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
+  async function handleRescan() {
+    if (!adminPassword) {
+      setMessage({ kind: "error", text: "Enter the admin password first." });
+      return;
+    }
+
+    setAdminBusy(true);
+    try {
+      const res = await fetch("/api/admin/sweep", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adminSecret: adminPassword }),
+      });
+      const data: SweepResponse | ApiErrorResponse = await res.json();
+
+      if (!res.ok || !("ok" in data)) {
+        setMessage({ kind: "error", text: (data as ApiErrorResponse).error ?? "Rescan failed." });
+        return;
+      }
+
+      await Promise.all([loadStatus(), loadSchema()]);
+      setMessage({
+        kind: "success",
+        text: `Rescanned ${data.processed} image(s); ${data.remaining} left in the queue.`,
+      });
+    } finally {
+      setAdminBusy(false);
+    }
   }
 
   const activeAlbumData: Album | undefined =
@@ -171,9 +297,23 @@ export default function AlbumApp() {
           </button>
         </form>
 
-        {status && (
-          <div className={`status-message ${status.kind}`} role="status">
-            {status.text}
+        <div className="separator" />
+
+        <button
+          type="button"
+          className={`ai-badge ${aiStatus?.enabled ? "connected" : "disconnected"}`}
+          onClick={() => setAdminDialogOpen(true)}
+        >
+          {aiStatus === null
+            ? "AI status..."
+            : aiStatus.enabled
+              ? `● AI connected (${aiStatus.provider})`
+              : "○ AI disconnected"}
+        </button>
+
+        {message && (
+          <div className={`status-message ${message.kind}`} role="status">
+            {message.text}
           </div>
         )}
       </header>
@@ -191,6 +331,11 @@ export default function AlbumApp() {
               You can also pre-create an album yourself with &ldquo;+ New album&rdquo; &mdash; the agent will
               immediately re-check any borderline images to see if they belong there instead.
             </p>
+            <p>
+              Classification needs an Anthropic or OpenAI key connected via the AI status button
+              above. Until then, uploads are kept safe in an &ldquo;Unclassified&rdquo; album and get
+              sorted automatically once a key is connected.
+            </p>
           </div>
         )}
 
@@ -201,7 +346,7 @@ export default function AlbumApp() {
                 {activeAlbumData?.title ?? activeAlbum}{" "}
                 <small>{activeAlbumData?.description}</small>
               </h2>
-              {activeImages.length === 0 && (
+              {activeImages.length === 0 && activeAlbum !== UNCLASSIFIED_ALBUM && (
                 <button type="button" className="subtle" onClick={() => handleDeleteAlbum(activeAlbum)}>
                   Delete empty album
                 </button>
@@ -220,7 +365,9 @@ export default function AlbumApp() {
                     </div>
                     <figcaption>
                       <span>{image.filename}</span>
-                      <span className="confidence">{Math.round(image.confidence * 100)}%</span>
+                      <span className="confidence">
+                        {image.label === UNCLASSIFIED_ALBUM ? "pending" : `${Math.round(image.confidence * 100)}%`}
+                      </span>
                     </figcaption>
                   </figure>
                 ))}
@@ -256,6 +403,96 @@ export default function AlbumApp() {
             </button>
           </div>
         </form>
+      </dialog>
+
+      <dialog ref={adminDialogRef} onClose={() => setAdminDialogOpen(false)}>
+        <h2 style={{ marginBottom: "0.75em" }}>AI classification</h2>
+
+        <p className="empty-state" style={{ marginBottom: "1em" }}>
+          {aiStatus?.enabled ? (
+            <>
+              {aiStatus.source === "env"
+                ? `Connected via the ${aiStatus.provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"} environment variable.`
+                : `Connected with a saved ${aiStatus.provider} key.`}
+              {aiStatus.unclassifiedCount > 0 &&
+                ` ${aiStatus.unclassifiedCount} image(s) are still waiting in Unclassified.`}
+            </>
+          ) : (
+            <>
+              Not connected. Uploads are filed under &ldquo;Unclassified&rdquo; until a key is connected.
+              There&apos;s no endpoint that hands back a key just by signing in &mdash; generate one yourself at{" "}
+              <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">
+                console.anthropic.com
+              </a>{" "}
+              and paste it below.
+            </>
+          )}
+        </p>
+
+        <div className="form-field">
+          <label htmlFor="admin-password">Admin password</label>
+          <input
+            id="admin-password"
+            type="password"
+            autoComplete="off"
+            value={adminPassword}
+            onChange={(e) => setAdminPassword(e.target.value)}
+          />
+        </div>
+
+        {!aiStatus?.enabled && (
+          <div className="form-field">
+            <label htmlFor="admin-api-key">
+              {aiStatus?.provider === "openai" ? "OpenAI" : "Anthropic"} API key
+            </label>
+            <input
+              id="admin-api-key"
+              type="password"
+              autoComplete="off"
+              placeholder="sk-ant-..."
+              value={adminApiKey}
+              onChange={(e) => setAdminApiKey(e.target.value)}
+            />
+          </div>
+        )}
+
+        <div className="dialog-actions">
+          <button
+            type="button"
+            id="admin-close-button"
+            className="subtle"
+            onClick={() => setAdminDialogOpen(false)}
+          >
+            Close
+          </button>
+          {aiStatus?.enabled && aiStatus.source === "stored" && (
+            <button
+              type="button"
+              id="admin-disconnect-button"
+              className="subtle"
+              onClick={handleDisconnect}
+              disabled={adminBusy}
+            >
+              Disconnect
+            </button>
+          )}
+          {aiStatus?.enabled && aiStatus.unclassifiedCount > 0 && (
+            <button type="button" id="admin-rescan-button" onClick={handleRescan} disabled={adminBusy}>
+              Rescan Unclassified
+            </button>
+          )}
+          {!aiStatus?.enabled && (
+            <button
+              type="button"
+              id="admin-connect-button"
+              className="primary"
+              onClick={handleConnect}
+              disabled={adminBusy}
+            >
+              Connect
+            </button>
+          )}
+        </div>
       </dialog>
     </>
   );

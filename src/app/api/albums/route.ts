@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pruneEmptyAlbums, reevaluateBorderlineImages } from "@/lib/classify";
 import { getConfig } from "@/lib/config";
+import { getActiveProviderKey } from "@/lib/secrets";
 import { readSchema, writeSchema } from "@/lib/store";
-import { slugifyAlbumName } from "@/lib/types";
+import { slugifyAlbumName, UNCLASSIFIED_ALBUM } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -12,7 +13,7 @@ function uniqueName(title: string, existing: Record<string, unknown>): string {
   let name = base;
   let suffix = 2;
 
-  while (existing[name]) {
+  while (existing[name] || name === UNCLASSIFIED_ALBUM) {
     name = `${base}-${suffix}`;
     suffix += 1;
   }
@@ -51,7 +52,10 @@ export async function POST(req: NextRequest) {
     };
 
     const config = getConfig();
-    const moved = await reevaluateBorderlineImages({ schema, config, newAlbumName: name });
+    const active = await getActiveProviderKey(config.aiProvider);
+    const moved = active
+      ? await reevaluateBorderlineImages({ schema, config, apiKey: active.key, newAlbumName: name })
+      : [];
     pruneEmptyAlbums(schema);
     await writeSchema(schema);
 
@@ -70,6 +74,10 @@ export async function DELETE(req: NextRequest) {
 
   if (!name) {
     return NextResponse.json({ error: "Missing `name` query parameter." }, { status: 400 });
+  }
+
+  if (name === UNCLASSIFIED_ALBUM) {
+    return NextResponse.json({ error: "The Unclassified album can't be deleted." }, { status: 400 });
   }
 
   const schema = await readSchema();
