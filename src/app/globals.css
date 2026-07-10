@@ -1,0 +1,215 @@
+@import url("https://fonts.googleapis.com/css2?family=PT+Sans+Narrow:wght@400;700&display=swap");
+
+:root {
+  --pink: #ff42ba;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #171717;
+  background: #ffffff;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+h1,
+h2 {
+  font-family: "PT Sans Narrow", sans-serif;
+}
+
+h1 {
+  font-size: 3em;
+}
+
+h2 {
+  border-bottom: 1px solid #ccc;
+  font-weight: 400;
+  font-size: 1.8em;
+  margin-bottom: 1rem;
+}
+
+.image-cel {
+  color: grey;
+  margin: 0;
+}
+
+.image-cel .thumb {
+  aspect-ratio: 1.618;
+  width: 100%;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #f0f0f0;
+}
+
+.image-cel img {
+  object-fit: cover;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.image-cel figcaption {
+  padding-top: 0.5em;
+  font-size: 0.8em;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5em;
+}
+
+.confidence {
+  color: #aaa;
+  white-space: nowrap;
+}
+
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(33%, 300px), 1fr));
+  gap: 1rem;
+}
+
+header {
+  position: sticky;
+  top: 0;
+  display: flex;
+  gap: 1em;
+  align-items: center;
+  background: white;
+  padding: 1em;
+  border-bottom: 1px solid #eee;
+  flex-wrap: wrap;
+  z-index: 10;
+}
+
+#browse-area {
+  padding: 0 2em 4em;
+}
+
+.status-message {
+  font-size: 0.8em;
+}
+
+.status-message.error {
+  color: #c0392b;
+}
+
+.status-message.success {
+  color: #1b8a3d;
+}
+
+select,
+button,
+input[type="text"],
+textarea,
+input[type="file"]::file-selector-button {
+  background: #e2e2e2;
+  padding: 0.5em 1em;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 1em;
+}
+
+input[type="text"],
+textarea {
+  cursor: text;
+  border: 1px solid #ddd;
+  background: white;
+}
+
+button:hover,
+input[type="file"]::file-selector-button:hover {
+  filter: brightness(90%);
+}
+
+button[type="submit"],
+button.primary {
+  background: var(--pink);
+  font-weight: 700;
+  color: white;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.subtle {
+  background: transparent;
+  color: #999;
+  padding: 0.25em 0.5em;
+}
+
+.separator {
+  height: 2em;
+  border-left: 1px solid #ccc;
+}
+
+.empty-state {
+  color: #777;
+  max-width: 40em;
+}
+
+.empty-state p {
+  margin-top: 0.75em;
+}
+
+dialog {
+  border: 0;
+  border-radius: 8px;
+  padding: 1.5em;
+  max-width: 28em;
+  width: 90%;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+}
+
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35em;
+  margin-bottom: 1em;
+}
+
+.form-field label {
+  font-size: 0.85em;
+  font-weight: 700;
+  color: #555;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 0.5em;
+  justify-content: flex-end;
+}
+
+.album-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1em;
+}
+
+.album-heading small {
+  font-size: 0.5em;
+  color: #999;
+  font-weight: 400;
+}
