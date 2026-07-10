@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sweepUnclassified } from "@/lib/classify";
+import { ProviderAuthError, sweepUnclassified } from "@/lib/classify";
 import { getConfig } from "@/lib/config";
 import { deleteStoredProviderKey, getActiveProviderKey, storeProviderKey, verifyAdminSecret } from "@/lib/secrets";
 import { readSchema, writeSchema } from "@/lib/store";
+import { UNCLASSIFIED_ALBUM } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -33,17 +34,26 @@ export async function POST(req: NextRequest) {
     await storeProviderKey(config.aiProvider, apiKey);
 
     // Immediately drain a first batch of the Unclassified backlog so reconnecting feels instant;
-    // any remainder gets picked up by later uploads/admin sweeps.
+    // any remainder gets picked up by later uploads/admin sweeps. This is best-effort: the key is
+    // considered "saved" regardless of whether it turns out to work, so a bad key here doesn't
+    // make the connect action itself look like it failed - `keyRejected` tells the client which
+    // happened, so it can loop back to the key-expired prompt instead of celebrating too early.
     const schema = await readSchema();
-    const { processed, remaining } = await sweepUnclassified({
-      schema,
-      config,
-      apiKey,
-      limit: config.maxSweepPerRun,
-    });
-    await writeSchema(schema);
+    let processed = 0;
+    let remaining = Object.values(schema.images).filter((img) => img.label === UNCLASSIFIED_ALBUM).length;
+    let keyRejected = false;
 
-    return NextResponse.json({ ok: true, processed, remaining });
+    try {
+      const sweepResult = await sweepUnclassified({ schema, config, apiKey, limit: config.maxSweepPerRun });
+      processed = sweepResult.processed;
+      remaining = sweepResult.remaining;
+      await writeSchema(schema);
+    } catch (err) {
+      if (err instanceof ProviderAuthError) keyRejected = true;
+      console.error("Post-connect sweep failed (key was still saved):", err);
+    }
+
+    return NextResponse.json({ ok: true, processed, remaining, keyRejected });
   } catch (err) {
     console.error("Failed to connect provider key:", err);
     return NextResponse.json(

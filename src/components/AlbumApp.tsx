@@ -3,16 +3,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ApiErrorResponse,
+  ConnectResponse,
   CreateAlbumResponse,
+  KeyExpiredResponse,
   SchemaResponse,
   StatusResponse,
   SweepResponse,
   UploadResponse,
 } from "@/lib/api-types";
+import type { AiProvider } from "@/lib/config";
 import type { Album, ImageRecord } from "@/lib/types";
 import { UNCLASSIFIED_ALBUM } from "@/lib/types";
 
 type StatusMessage = { kind: "success" | "error"; text: string };
+type PendingKeyExpired = { filename: string; url: string; provider: AiProvider };
+
+function isKeyExpired(data: unknown): data is KeyExpiredResponse {
+  return typeof data === "object" && data !== null && (data as { error?: unknown }).error === "key_expired";
+}
 
 const HOME = "home";
 
@@ -32,6 +40,11 @@ export default function AlbumApp() {
   const [adminPassword, setAdminPassword] = useState("");
   const [adminApiKey, setAdminApiKey] = useState("");
   const [adminBusy, setAdminBusy] = useState(false);
+
+  const [pendingKeyExpired, setPendingKeyExpired] = useState<PendingKeyExpired | null>(null);
+  const [keyExpiredDialogOpen, setKeyExpiredDialogOpen] = useState(false);
+  const keyExpiredDialogRef = useRef<HTMLDialogElement | null>(null);
+  const [keyExpiredBusy, setKeyExpiredBusy] = useState(false);
 
   const loadSchema = useCallback(async () => {
     const res = await fetch("/api/images", { cache: "no-store" });
@@ -63,6 +76,13 @@ export default function AlbumApp() {
     if (adminDialogOpen && !dialog.open) dialog.showModal();
     if (!adminDialogOpen && dialog.open) dialog.close();
   }, [adminDialogOpen]);
+
+  useEffect(() => {
+    const dialog = keyExpiredDialogRef.current;
+    if (!dialog) return;
+    if (keyExpiredDialogOpen && !dialog.open) dialog.showModal();
+    if (!keyExpiredDialogOpen && dialog.open) dialog.close();
+  }, [keyExpiredDialogOpen]);
 
   const albums = useMemo(() => {
     if (!schema) return [];
@@ -97,7 +117,15 @@ export default function AlbumApp() {
       formData.append("image", file);
 
       const res = await fetch("/api/upload", { method: "POST", body: formData });
-      const data: UploadResponse | ApiErrorResponse = await res.json();
+      const data: UploadResponse | KeyExpiredResponse | ApiErrorResponse = await res.json();
+
+      if (fileInputRef.current) fileInputRef.current.value = "";
+
+      if (isKeyExpired(data)) {
+        setPendingKeyExpired({ filename: data.filename, url: data.url, provider: data.provider });
+        setKeyExpiredDialogOpen(true);
+        return;
+      }
 
       if (!res.ok || !("ok" in data)) {
         setMessage({ kind: "error", text: (data as ApiErrorResponse).error ?? "Upload failed." });
@@ -114,8 +142,6 @@ export default function AlbumApp() {
             ? "Upload succeeded! No existing album fit, so a new album was created for it."
             : "Upload succeeded! Filed into an existing album.",
       });
-
-      if (fileInputRef.current) fileInputRef.current.value = "";
     } catch {
       setMessage({ kind: "error", text: "Upload failed: network error." });
     } finally {
@@ -182,7 +208,7 @@ export default function AlbumApp() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ adminSecret: adminPassword, apiKey: adminApiKey }),
       });
-      const data: SweepResponse | ApiErrorResponse = await res.json();
+      const data: ConnectResponse | ApiErrorResponse = await res.json();
 
       if (!res.ok || !("ok" in data)) {
         setMessage({ kind: "error", text: (data as ApiErrorResponse).error ?? "Could not connect." });
@@ -192,6 +218,14 @@ export default function AlbumApp() {
       setAdminPassword("");
       setAdminApiKey("");
       setAdminDialogOpen(false);
+
+      // A file is still waiting on a decision from the key-expired prompt - retry classifying
+      // it with the freshly-connected key instead of showing the usual "sorted N images" message.
+      if (pendingKeyExpired) {
+        await retryPendingUpload();
+        return;
+      }
+
       await Promise.all([loadStatus(), loadSchema()]);
       setMessage({
         kind: "success",
@@ -207,6 +241,91 @@ export default function AlbumApp() {
     } finally {
       setAdminBusy(false);
     }
+  }
+
+  async function retryPendingUpload() {
+    if (!pendingKeyExpired) return;
+    const { filename, url } = pendingKeyExpired;
+
+    const res = await fetch("/api/upload/resolve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename, url, action: "retry_classification" }),
+    });
+    const data: UploadResponse | KeyExpiredResponse | ApiErrorResponse = await res.json();
+
+    if (isKeyExpired(data)) {
+      // The freshly-connected key didn't work either - loop back to the same prompt.
+      setPendingKeyExpired({ filename: data.filename, url: data.url, provider: data.provider });
+      setKeyExpiredDialogOpen(true);
+      setMessage({ kind: "error", text: "That key was rejected too." });
+      await loadStatus();
+      return;
+    }
+
+    setPendingKeyExpired(null);
+    await Promise.all([loadStatus(), loadSchema()]);
+
+    if (!res.ok || !("ok" in data)) {
+      setMessage({ kind: "error", text: (data as ApiErrorResponse).error ?? "Could not classify the pending image." });
+      return;
+    }
+
+    setActiveAlbum(data.label);
+    setMessage({
+      kind: "success",
+      text: `Connected! The pending image was classified into "${data.label}".`,
+    });
+  }
+
+  async function handleFilePendingAsUnclassified() {
+    if (!pendingKeyExpired) return;
+    const { filename, url } = pendingKeyExpired;
+
+    setKeyExpiredBusy(true);
+    try {
+      const res = await fetch("/api/upload/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename, url, action: "file_unclassified" }),
+      });
+      const data: UploadResponse | ApiErrorResponse = await res.json();
+
+      setPendingKeyExpired(null);
+      setKeyExpiredDialogOpen(false);
+
+      if (!res.ok || !("ok" in data)) {
+        setMessage({ kind: "error", text: (data as ApiErrorResponse).error ?? "Could not file the image." });
+        return;
+      }
+
+      await Promise.all([loadSchema(), loadStatus()]);
+      setActiveAlbum(data.label);
+      setMessage({ kind: "success", text: "Filed under Unclassified for now." });
+    } finally {
+      setKeyExpiredBusy(false);
+    }
+  }
+
+  function handleConnectReplacementKey() {
+    setKeyExpiredDialogOpen(false);
+    setAdminDialogOpen(true);
+  }
+
+  async function handleDiscardPendingUpload() {
+    if (!pendingKeyExpired) return;
+    const { filename, url } = pendingKeyExpired;
+
+    setPendingKeyExpired(null);
+    setKeyExpiredDialogOpen(false);
+
+    await fetch("/api/upload/resolve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename, url, action: "discard" }),
+    }).catch(() => undefined);
+
+    setMessage({ kind: "success", text: "Upload cancelled." });
   }
 
   async function handleDisconnect() {
@@ -271,6 +390,11 @@ export default function AlbumApp() {
   const activeAlbumData: Album | undefined =
     activeAlbum !== HOME ? schema?.albums[activeAlbum] : undefined;
   const activeImages = imagesByAlbum[activeAlbum] ?? [];
+
+  // The connected key might still look "enabled" per status (it exists) even though it was just
+  // rejected - force the key-entry form instead of the Disconnect/Rescan view whenever there's a
+  // pending upload waiting on a replacement key.
+  const forceKeyEntry = !aiStatus?.enabled || pendingKeyExpired !== null;
 
   return (
     <>
@@ -409,15 +533,12 @@ export default function AlbumApp() {
         <h2 style={{ marginBottom: "0.75em" }}>AI classification</h2>
 
         <p className="empty-state" style={{ marginBottom: "1em" }}>
-          {aiStatus?.enabled ? (
+          {pendingKeyExpired ? (
             <>
-              {aiStatus.source === "env"
-                ? `Connected via the ${aiStatus.provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"} environment variable.`
-                : `Connected with a saved ${aiStatus.provider} key.`}
-              {aiStatus.unclassifiedCount > 0 &&
-                ` ${aiStatus.unclassifiedCount} image(s) are still waiting in Unclassified.`}
+              The connected {pendingKeyExpired.provider === "openai" ? "OpenAI" : "Anthropic"} key was
+              rejected. Paste a replacement below to classify the image you just uploaded.
             </>
-          ) : (
+          ) : forceKeyEntry ? (
             <>
               Not connected. Uploads are filed under &ldquo;Unclassified&rdquo; until a key is connected.
               There&apos;s no endpoint that hands back a key just by signing in &mdash; generate one yourself at{" "}
@@ -425,6 +546,14 @@ export default function AlbumApp() {
                 console.anthropic.com
               </a>{" "}
               and paste it below.
+            </>
+          ) : (
+            <>
+              {aiStatus?.source === "env"
+                ? `Connected via the ${aiStatus.provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"} environment variable.`
+                : `Connected with a saved ${aiStatus?.provider} key.`}
+              {aiStatus && aiStatus.unclassifiedCount > 0 &&
+                ` ${aiStatus.unclassifiedCount} image(s) are still waiting in Unclassified.`}
             </>
           )}
         </p>
@@ -440,10 +569,10 @@ export default function AlbumApp() {
           />
         </div>
 
-        {!aiStatus?.enabled && (
+        {forceKeyEntry && (
           <div className="form-field">
             <label htmlFor="admin-api-key">
-              {aiStatus?.provider === "openai" ? "OpenAI" : "Anthropic"} API key
+              {(pendingKeyExpired?.provider ?? aiStatus?.provider) === "openai" ? "OpenAI" : "Anthropic"} API key
             </label>
             <input
               id="admin-api-key"
@@ -465,7 +594,7 @@ export default function AlbumApp() {
           >
             Close
           </button>
-          {aiStatus?.enabled && aiStatus.source === "stored" && (
+          {!forceKeyEntry && aiStatus?.source === "stored" && (
             <button
               type="button"
               id="admin-disconnect-button"
@@ -476,12 +605,12 @@ export default function AlbumApp() {
               Disconnect
             </button>
           )}
-          {aiStatus?.enabled && aiStatus.unclassifiedCount > 0 && (
+          {!forceKeyEntry && aiStatus && aiStatus.unclassifiedCount > 0 && (
             <button type="button" id="admin-rescan-button" onClick={handleRescan} disabled={adminBusy}>
               Rescan Unclassified
             </button>
           )}
-          {!aiStatus?.enabled && (
+          {forceKeyEntry && (
             <button
               type="button"
               id="admin-connect-button"
@@ -492,6 +621,41 @@ export default function AlbumApp() {
               Connect
             </button>
           )}
+        </div>
+      </dialog>
+
+      <dialog ref={keyExpiredDialogRef} onClose={() => setKeyExpiredDialogOpen(false)}>
+        <h2 style={{ marginBottom: "0.75em" }}>Uh oh! The key has expired.</h2>
+        <p className="empty-state" style={{ marginBottom: "1em" }}>
+          Your {pendingKeyExpired?.provider === "openai" ? "OpenAI" : "Anthropic"} API key was rejected
+          while classifying the image you just uploaded &mdash; it may have expired or been revoked. The
+          image is safely uploaded; you just need to decide what to do with it.
+        </p>
+        <div className="dialog-actions" style={{ flexWrap: "wrap" }}>
+          <button
+            type="button"
+            id="key-expired-discard-button"
+            className="subtle"
+            onClick={handleDiscardPendingUpload}
+          >
+            Go back
+          </button>
+          <button
+            type="button"
+            id="key-expired-unclassified-button"
+            onClick={handleFilePendingAsUnclassified}
+            disabled={keyExpiredBusy}
+          >
+            Upload as Unclassified
+          </button>
+          <button
+            type="button"
+            id="key-expired-reconnect-button"
+            className="primary"
+            onClick={handleConnectReplacementKey}
+          >
+            Connect a new key
+          </button>
         </div>
       </dialog>
     </>

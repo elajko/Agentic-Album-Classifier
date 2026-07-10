@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { classifyAndFile, fileUnclassified, sweepUnclassified } from "@/lib/classify";
+import { classifyAndFile, fileUnclassified, ProviderAuthError, sweepUnclassified } from "@/lib/classify";
 import { getConfig } from "@/lib/config";
 import { getActiveProviderKey } from "@/lib/secrets";
 import { readSchema, storeImage, writeSchema } from "@/lib/store";
@@ -44,32 +44,55 @@ export async function POST(req: NextRequest) {
 
     const active = await getActiveProviderKey(config.aiProvider);
 
-    let label: string;
-    let createdNewAlbum = false;
-    let classified: boolean;
-
-    if (active) {
-      const result = await classifyAndFile({
-        schema,
-        imageUrl: url,
-        filename,
-        config,
-        apiKey: active.key,
-      });
-      label = result.label;
-      createdNewAlbum = result.createdNewAlbum;
-      classified = true;
-
-      await sweepUnclassified({ schema, config, apiKey: active.key, limit: OPPORTUNISTIC_SWEEP_LIMIT });
-    } else {
+    if (!active) {
       fileUnclassified(schema, url, filename);
-      label = UNCLASSIFIED_ALBUM;
-      classified = false;
+      await writeSchema(schema);
+      return NextResponse.json({
+        ok: true,
+        filename,
+        label: UNCLASSIFIED_ALBUM,
+        createdNewAlbum: false,
+        classified: false,
+      });
     }
 
-    await writeSchema(schema);
+    // The image is already stored in Blob at this point, but not yet added to the schema - if
+    // classification fails because the key itself is bad, it stays that way (unregistered, not
+    // shown anywhere) until the client tells us how to resolve it via /api/upload/resolve.
+    try {
+      const result = await classifyAndFile({ schema, imageUrl: url, filename, config, apiKey: active.key });
+      await writeSchema(schema);
 
-    return NextResponse.json({ ok: true, filename, label, createdNewAlbum, classified });
+      try {
+        await sweepUnclassified({ schema, config, apiKey: active.key, limit: OPPORTUNISTIC_SWEEP_LIMIT });
+        await writeSchema(schema);
+      } catch (sweepErr) {
+        // Best-effort backlog drain - don't fail an otherwise-successful upload over it.
+        console.error("Opportunistic Unclassified sweep failed:", sweepErr);
+      }
+
+      return NextResponse.json({
+        ok: true,
+        filename,
+        label: result.label,
+        createdNewAlbum: result.createdNewAlbum,
+        classified: true,
+      });
+    } catch (err) {
+      if (err instanceof ProviderAuthError) {
+        return NextResponse.json(
+          {
+            error: "key_expired",
+            message: `Your ${err.provider === "openai" ? "OpenAI" : "Anthropic"} API key was rejected. It may have expired or been revoked.`,
+            filename,
+            url,
+            provider: err.provider,
+          },
+          { status: 401 }
+        );
+      }
+      throw err;
+    }
   } catch (err) {
     console.error("Upload/classification failed:", err);
     return NextResponse.json(

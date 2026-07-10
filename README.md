@@ -48,6 +48,11 @@ persist even while empty.
       made while no AI provider key is connected are filed into a reserved "Unclassified" album
       instead of being rejected. Connecting a key immediately sorts a batch of the backlog, and the
       rest drains automatically as you keep using the app (or on demand via "Rescan Unclassified").
+- [x] **Expired/revoked key detection** — there's no separate "is my key still valid" health
+      check hitting the provider on a timer; the only way this is ever discovered is as a side
+      effect of a real classification call, i.e. when a file is actually uploaded. If that call
+      comes back 401/403, the image (already safely stored) isn't silently dropped or misfiled —
+      the user gets a prompt with three ways to resolve it. See "Key expiration" below.
 
 ## AI connection
 
@@ -65,6 +70,22 @@ The header has an "AI connected" / "AI disconnected" button. Click it to open a 
 - **Backlog present**: shows how many images are waiting in Unclassified, with a manual "Rescan
   Unclassified" button (also gated by `ADMIN_SECRET`, since each image costs an LLM call).
 
+## Key expiration
+
+Uploading a file is the only thing that ever exercises the provider key, so it's also the only
+place expiration is discovered — there's no background poll hitting Anthropic/OpenAI just to check
+key health. If the classification call for a freshly-uploaded image comes back 401/403 (key
+expired, revoked, or otherwise invalid), the image stays safely in Blob storage but isn't filed
+anywhere yet, and a "Uh oh! The key has expired." dialog offers three ways to resolve it:
+
+- **Upload as Unclassified** — file it in the Unclassified bucket for now, same as if no key were
+  connected at all; you can reconnect and "Rescan" later.
+- **Connect a new key** — opens the same password-gated Connect flow used elsewhere in the app,
+  which already targets whichever provider `AI_PROVIDER` is set to (Anthropic or OpenAI). On
+  success, the pending image is retried automatically; if the replacement key is *also* rejected,
+  the same prompt reappears rather than pretending it worked.
+- **Go back** — discards the pending upload (deletes the orphaned blob) and does nothing further.
+
 ## Architecture
 
 ```
@@ -72,7 +93,9 @@ src/
   app/
     api/
       upload/route.ts       POST multipart image -> stores blob, classifies or files as
-                             Unclassified, updates schema.json
+                             Unclassified, updates schema.json; 401 + key_expired on a rejected key
+      upload/resolve/route.ts POST resolve a pending key_expired upload: file as Unclassified,
+                             retry classification (after reconnecting), or discard
       images/route.ts       GET  -> current schema.json (albums + images)
       albums/route.ts       POST create a user album (+ reevaluation) / DELETE an empty album
       admin/

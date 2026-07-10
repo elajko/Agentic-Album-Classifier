@@ -1,10 +1,31 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
-import { generateObject, type LanguageModel } from "ai";
+import { APICallError, generateObject, type LanguageModel } from "ai";
 import { z } from "zod";
-import type { AppConfig } from "./config";
+import type { AiProvider, AppConfig } from "./config";
 import type { Album, ImageRecord, Schema } from "./types";
 import { slugifyAlbumName, UNCLASSIFIED_ALBUM } from "./types";
+
+/**
+ * Thrown instead of a raw provider error when the API itself rejects the key (401/403) - as
+ * opposed to network blips, rate limits, or model overload, which should just be a generic
+ * failure. There's no separate "is my key still valid" ping; this is only ever discovered as a
+ * side effect of a real classification call (i.e. when a file is actually uploaded).
+ */
+export class ProviderAuthError extends Error {
+  constructor(
+    public readonly provider: AiProvider,
+    cause: unknown
+  ) {
+    super(`The ${provider} API key was rejected (expired, revoked, or invalid).`);
+    this.name = "ProviderAuthError";
+    this.cause = cause;
+  }
+}
+
+function isAuthFailure(err: unknown): boolean {
+  return APICallError.isInstance(err) && (err.statusCode === 401 || err.statusCode === 403);
+}
 
 const classificationSchema = z.object({
   decision: z
@@ -79,37 +100,42 @@ export async function classifyImage(params: {
 }): Promise<ClassificationResult> {
   const { imageUrl, albums, config, apiKey } = params;
 
-  const { object } = await generateObject({
-    model: getModel(config, apiKey),
-    schema: classificationSchema,
-    system:
-      "You are the sorting agent for a photo album app. You maintain a small set of albums " +
-      "(each with a short description) and decide which album each new image belongs to. " +
-      "Prefer an existing album whenever the image genuinely fits its theme. Only propose a new " +
-      `album when the image doesn't fit any existing album with at least ${config.classificationThreshold} confidence. ` +
-      "Keep album titles short and general enough to plausibly hold future similar images, not " +
-      "hyper-specific to this one photo.",
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text:
-              `Existing albums:\n${describeAlbums(albums)}\n\n` +
-              "Classify the attached image against these albums.",
-          },
-          {
-            type: "file",
-            data: new URL(imageUrl),
-            mediaType: inferMediaType(imageUrl),
-          },
-        ],
-      },
-    ],
-  });
+  try {
+    const { object } = await generateObject({
+      model: getModel(config, apiKey),
+      schema: classificationSchema,
+      system:
+        "You are the sorting agent for a photo album app. You maintain a small set of albums " +
+        "(each with a short description) and decide which album each new image belongs to. " +
+        "Prefer an existing album whenever the image genuinely fits its theme. Only propose a new " +
+        `album when the image doesn't fit any existing album with at least ${config.classificationThreshold} confidence. ` +
+        "Keep album titles short and general enough to plausibly hold future similar images, not " +
+        "hyper-specific to this one photo.",
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text:
+                `Existing albums:\n${describeAlbums(albums)}\n\n` +
+                "Classify the attached image against these albums.",
+            },
+            {
+              type: "file",
+              data: new URL(imageUrl),
+              mediaType: inferMediaType(imageUrl),
+            },
+          ],
+        },
+      ],
+    });
 
-  return object;
+    return object;
+  } catch (err) {
+    if (isAuthFailure(err)) throw new ProviderAuthError(config.aiProvider, err);
+    throw err;
+  }
 }
 
 function uniqueAlbumName(desiredTitle: string, existing: Record<string, Album>): {
