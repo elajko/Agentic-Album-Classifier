@@ -45,10 +45,7 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# there is no local image/db directory in this app by design - uploads and schema.json live in
-# Vercel Blob storage (see src/lib/store.ts), never on local/serverless disk - but these are
-# ignored defensively in case a local dev fallback is ever added
-/db/
-/model/
-/schema.json
-/config.json
+# local storage mode (used automatically when BLOB_READ_WRITE_TOKEN isn't set - see
+# src/lib/store.ts and src/lib/storage/local-backend.ts) - uploaded images and schema.json land
+# here instead of Vercel Blob, purely for zero-setup local dev. Never used in production.
+/local-storage/

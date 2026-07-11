@@ -6,6 +6,7 @@ import type {
   ConnectResponse,
   CreateAlbumResponse,
   KeyExpiredResponse,
+  ProviderErrorResponse,
   SchemaResponse,
   StatusResponse,
   SweepResponse,
@@ -16,10 +17,25 @@ import type { Album, ImageRecord } from "@/lib/types";
 import { UNCLASSIFIED_ALBUM } from "@/lib/types";
 
 type StatusMessage = { kind: "success" | "error"; text: string };
-type PendingKeyExpired = { filename: string; url: string; provider: AiProvider };
 
-function isKeyExpired(data: unknown): data is KeyExpiredResponse {
-  return typeof data === "object" && data !== null && (data as { error?: unknown }).error === "key_expired";
+/** An upload that's stored but not yet filed anywhere, waiting on one of three user choices. */
+type PendingResolution = {
+  kind: "key_expired" | "provider_error";
+  filename: string;
+  url: string;
+  provider: AiProvider;
+  message: string;
+};
+
+function asPendingResolution(data: unknown): PendingResolution | null {
+  if (typeof data !== "object" || data === null) return null;
+  const d = data as Record<string, unknown>;
+
+  if (d.error !== "key_expired" && d.error !== "provider_error") return null;
+  if (typeof d.filename !== "string" || typeof d.url !== "string" || typeof d.message !== "string") return null;
+  if (d.provider !== "anthropic" && d.provider !== "openai") return null;
+
+  return { kind: d.error, filename: d.filename, url: d.url, provider: d.provider, message: d.message };
 }
 
 const HOME = "home";
@@ -41,10 +57,12 @@ export default function AlbumApp() {
   const [adminApiKey, setAdminApiKey] = useState("");
   const [adminBusy, setAdminBusy] = useState(false);
 
-  const [pendingKeyExpired, setPendingKeyExpired] = useState<PendingKeyExpired | null>(null);
-  const [keyExpiredDialogOpen, setKeyExpiredDialogOpen] = useState(false);
-  const keyExpiredDialogRef = useRef<HTMLDialogElement | null>(null);
-  const [keyExpiredBusy, setKeyExpiredBusy] = useState(false);
+  const [pendingResolution, setPendingResolution] = useState<PendingResolution | null>(null);
+  const [resolutionDialogOpen, setResolutionDialogOpen] = useState(false);
+  const resolutionDialogRef = useRef<HTMLDialogElement | null>(null);
+  const [resolutionBusy, setResolutionBusy] = useState(false);
+
+  const [hasFile, setHasFile] = useState(false);
 
   const loadSchema = useCallback(async () => {
     const res = await fetch("/api/images", { cache: "no-store" });
@@ -78,11 +96,11 @@ export default function AlbumApp() {
   }, [adminDialogOpen]);
 
   useEffect(() => {
-    const dialog = keyExpiredDialogRef.current;
+    const dialog = resolutionDialogRef.current;
     if (!dialog) return;
-    if (keyExpiredDialogOpen && !dialog.open) dialog.showModal();
-    if (!keyExpiredDialogOpen && dialog.open) dialog.close();
-  }, [keyExpiredDialogOpen]);
+    if (resolutionDialogOpen && !dialog.open) dialog.showModal();
+    if (!resolutionDialogOpen && dialog.open) dialog.close();
+  }, [resolutionDialogOpen]);
 
   const albums = useMemo(() => {
     if (!schema) return [];
@@ -117,13 +135,16 @@ export default function AlbumApp() {
       formData.append("image", file);
 
       const res = await fetch("/api/upload", { method: "POST", body: formData });
-      const data: UploadResponse | KeyExpiredResponse | ApiErrorResponse = await res.json();
+      const data: UploadResponse | KeyExpiredResponse | ProviderErrorResponse | ApiErrorResponse =
+        await res.json();
 
       if (fileInputRef.current) fileInputRef.current.value = "";
+      setHasFile(false);
 
-      if (isKeyExpired(data)) {
-        setPendingKeyExpired({ filename: data.filename, url: data.url, provider: data.provider });
-        setKeyExpiredDialogOpen(true);
+      const pending = asPendingResolution(data);
+      if (pending) {
+        setPendingResolution(pending);
+        setResolutionDialogOpen(true);
         return;
       }
 
@@ -219,9 +240,9 @@ export default function AlbumApp() {
       setAdminApiKey("");
       setAdminDialogOpen(false);
 
-      // A file is still waiting on a decision from the key-expired prompt - retry classifying
+      // A file is still waiting on a decision from the resolution prompt - retry classifying
       // it with the freshly-connected key instead of showing the usual "sorted N images" message.
-      if (pendingKeyExpired) {
+      if (pendingResolution) {
         await retryPendingUpload();
         return;
       }
@@ -244,26 +265,28 @@ export default function AlbumApp() {
   }
 
   async function retryPendingUpload() {
-    if (!pendingKeyExpired) return;
-    const { filename, url } = pendingKeyExpired;
+    if (!pendingResolution) return;
+    const { filename, url } = pendingResolution;
 
     const res = await fetch("/api/upload/resolve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ filename, url, action: "retry_classification" }),
     });
-    const data: UploadResponse | KeyExpiredResponse | ApiErrorResponse = await res.json();
+    const data: UploadResponse | KeyExpiredResponse | ProviderErrorResponse | ApiErrorResponse =
+      await res.json();
 
-    if (isKeyExpired(data)) {
+    const pending = asPendingResolution(data);
+    if (pending) {
       // The freshly-connected key didn't work either - loop back to the same prompt.
-      setPendingKeyExpired({ filename: data.filename, url: data.url, provider: data.provider });
-      setKeyExpiredDialogOpen(true);
-      setMessage({ kind: "error", text: "That key was rejected too." });
+      setPendingResolution(pending);
+      setResolutionDialogOpen(true);
+      setMessage({ kind: "error", text: "That didn't work either: " + pending.message });
       await loadStatus();
       return;
     }
 
-    setPendingKeyExpired(null);
+    setPendingResolution(null);
     await Promise.all([loadStatus(), loadSchema()]);
 
     if (!res.ok || !("ok" in data)) {
@@ -279,10 +302,10 @@ export default function AlbumApp() {
   }
 
   async function handleFilePendingAsUnclassified() {
-    if (!pendingKeyExpired) return;
-    const { filename, url } = pendingKeyExpired;
+    if (!pendingResolution) return;
+    const { filename, url } = pendingResolution;
 
-    setKeyExpiredBusy(true);
+    setResolutionBusy(true);
     try {
       const res = await fetch("/api/upload/resolve", {
         method: "POST",
@@ -291,8 +314,8 @@ export default function AlbumApp() {
       });
       const data: UploadResponse | ApiErrorResponse = await res.json();
 
-      setPendingKeyExpired(null);
-      setKeyExpiredDialogOpen(false);
+      setPendingResolution(null);
+      setResolutionDialogOpen(false);
 
       if (!res.ok || !("ok" in data)) {
         setMessage({ kind: "error", text: (data as ApiErrorResponse).error ?? "Could not file the image." });
@@ -303,21 +326,21 @@ export default function AlbumApp() {
       setActiveAlbum(data.label);
       setMessage({ kind: "success", text: "Filed under Unclassified for now." });
     } finally {
-      setKeyExpiredBusy(false);
+      setResolutionBusy(false);
     }
   }
 
   function handleConnectReplacementKey() {
-    setKeyExpiredDialogOpen(false);
+    setResolutionDialogOpen(false);
     setAdminDialogOpen(true);
   }
 
   async function handleDiscardPendingUpload() {
-    if (!pendingKeyExpired) return;
-    const { filename, url } = pendingKeyExpired;
+    if (!pendingResolution) return;
+    const { filename, url } = pendingResolution;
 
-    setPendingKeyExpired(null);
-    setKeyExpiredDialogOpen(false);
+    setPendingResolution(null);
+    setResolutionDialogOpen(false);
 
     await fetch("/api/upload/resolve", {
       method: "POST",
@@ -394,7 +417,7 @@ export default function AlbumApp() {
   // The connected key might still look "enabled" per status (it exists) even though it was just
   // rejected - force the key-entry form instead of the Disconnect/Rescan view whenever there's a
   // pending upload waiting on a replacement key.
-  const forceKeyEntry = !aiStatus?.enabled || pendingKeyExpired !== null;
+  const forceKeyEntry = !aiStatus?.enabled || pendingResolution !== null;
 
   return (
     <>
@@ -415,8 +438,14 @@ export default function AlbumApp() {
         <div className="separator" />
 
         <form onSubmit={handleUpload} style={{ display: "flex", gap: "1em", alignItems: "center" }}>
-          <input ref={fileInputRef} type="file" name="image" accept="image/*" />
-          <button type="submit" disabled={uploading}>
+          <input
+            ref={fileInputRef}
+            type="file"
+            name="image"
+            accept="image/*"
+            onChange={(e) => setHasFile(!!e.target.files?.length)}
+          />
+          <button type="submit" disabled={uploading || !hasFile}>
             {uploading ? "Classifying..." : "Upload"}
           </button>
         </form>
@@ -533,10 +562,11 @@ export default function AlbumApp() {
         <h2 style={{ marginBottom: "0.75em" }}>AI classification</h2>
 
         <p className="empty-state" style={{ marginBottom: "1em" }}>
-          {pendingKeyExpired ? (
+          {pendingResolution ? (
             <>
-              The connected {pendingKeyExpired.provider === "openai" ? "OpenAI" : "Anthropic"} key was
-              rejected. Paste a replacement below to classify the image you just uploaded.
+              The connected {pendingResolution.provider === "openai" ? "OpenAI" : "Anthropic"} key
+              didn&apos;t work: &ldquo;{pendingResolution.message}&rdquo; Paste a working key below to
+              classify the image you just uploaded.
             </>
           ) : forceKeyEntry ? (
             <>
@@ -572,7 +602,7 @@ export default function AlbumApp() {
         {forceKeyEntry && (
           <div className="form-field">
             <label htmlFor="admin-api-key">
-              {(pendingKeyExpired?.provider ?? aiStatus?.provider) === "openai" ? "OpenAI" : "Anthropic"} API key
+              {(pendingResolution?.provider ?? aiStatus?.provider) === "openai" ? "OpenAI" : "Anthropic"} API key
             </label>
             <input
               id="admin-api-key"
@@ -624,12 +654,26 @@ export default function AlbumApp() {
         </div>
       </dialog>
 
-      <dialog ref={keyExpiredDialogRef} onClose={() => setKeyExpiredDialogOpen(false)}>
-        <h2 style={{ marginBottom: "0.75em" }}>Uh oh! The key has expired.</h2>
+      <dialog ref={resolutionDialogRef} onClose={() => setResolutionDialogOpen(false)}>
+        <h2 style={{ marginBottom: "0.75em" }}>
+          {pendingResolution?.kind === "provider_error"
+            ? "Uh oh! The AI provider had a problem."
+            : "Uh oh! The key has expired."}
+        </h2>
         <p className="empty-state" style={{ marginBottom: "1em" }}>
-          Your {pendingKeyExpired?.provider === "openai" ? "OpenAI" : "Anthropic"} API key was rejected
-          while classifying the image you just uploaded &mdash; it may have expired or been revoked. The
-          image is safely uploaded; you just need to decide what to do with it.
+          {pendingResolution?.kind === "provider_error" ? (
+            <>
+              The {pendingResolution.provider === "openai" ? "OpenAI" : "Anthropic"} API said:
+              &ldquo;{pendingResolution.message}&rdquo; The image is safely uploaded; you just need to
+              decide what to do with it.
+            </>
+          ) : (
+            <>
+              Your {pendingResolution?.provider === "openai" ? "OpenAI" : "Anthropic"} API key was
+              rejected while classifying the image you just uploaded &mdash; it may have expired or
+              been revoked. The image is safely uploaded; you just need to decide what to do with it.
+            </>
+          )}
         </p>
         <div className="dialog-actions" style={{ flexWrap: "wrap" }}>
           <button
@@ -644,7 +688,7 @@ export default function AlbumApp() {
             type="button"
             id="key-expired-unclassified-button"
             onClick={handleFilePendingAsUnclassified}
-            disabled={keyExpiredBusy}
+            disabled={resolutionBusy}
           >
             Upload as Unclassified
           </button>
@@ -654,7 +698,7 @@ export default function AlbumApp() {
             className="primary"
             onClick={handleConnectReplacementKey}
           >
-            Connect a new key
+            Connect a different key
           </button>
         </div>
       </dialog>

@@ -103,15 +103,65 @@ src/
         connect/route.ts    POST save a key + sweep backlog / DELETE remove a saved key
         sweep/route.ts      POST manually drain another batch of Unclassified
     page.tsx                 renders the gallery
+    api/local-image/[filename]/route.ts  GET serves images in local storage mode (see below)
   components/AlbumApp.tsx    client-side gallery, upload form, album dialog, AI status dialog
   lib/
     types.ts                 Schema / Album / ImageRecord types, UNCLASSIFIED_ALBUM constant
     config.ts                env-var driven AppConfig
-    store.ts                 Vercel Blob read/write for schema.json and images
+    media.ts                 shared filename -> MIME type inference
+    image.ts                 soft downscale applied before every classification call
+    store.ts                 picks a storage backend (see "Storage" below) and re-exports it
+    storage/blob-backend.ts  Vercel Blob read/write for schema.json and images (production)
+    storage/local-backend.ts local-disk equivalent, used automatically without a Blob token
     classify.ts              the classification + agentic orchestration logic
     crypto.ts                AES-256-GCM encrypt/decrypt, timing-safe string compare
     secrets.ts               encrypted key storage + admin password verification
 ```
+
+## Storage
+
+Where `schema.json` and uploaded images live is chosen automatically by `lib/store.ts`, with no
+config needed:
+
+- **`BLOB_READ_WRITE_TOKEN` set** → [Vercel Blob](https://vercel.com/docs/storage/vercel-blob).
+  This is the production path, and the only one that works once deployed (serverless functions
+  have no persistent disk).
+- **Not set** → local disk, under `./local-storage/` (gitignored, never committed). Images are
+  served back to the browser via `GET /api/local-image/[filename]`.
+
+Either way, `classify.ts` always reads the image's actual bytes before classifying it (via
+`store.ts`'s `getImageBytes`) rather than ever handing the provider a bare URL to fetch itself -
+necessary for local mode anyway, since a `localhost` URL isn't reachable from the provider's
+servers, and it's what makes the downscaling below possible for Blob-backed images too, at the
+cost of one extra fetch through our own function instead of letting the provider pull the URL
+directly.
+
+This means you can run the whole app - uploads, classification, browsing - with nothing but an
+Anthropic or OpenAI key and zero Vercel setup. The one thing local mode *doesn't* cover: a key
+connected at runtime through the "AI classification" dialog's Connect flow is still always stored
+in Vercel Blob (`lib/secrets.ts` is unconditional), so if you want to test that specific flow
+without `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` set directly in your env, you'll still need a real
+Blob token.
+
+## Image downscaling
+
+Every image is run through `lib/image.ts` before classification, purely to cut cost on typical
+phone-camera-sized uploads:
+
+- Images already at or under 1568px on both dimensions are left completely untouched - no
+  re-encoding, no quality loss. That number isn't arbitrary: it's Claude's own documented target
+  size for the long edge of a vision input, so resizing down to it ourselves doesn't throw away
+  any detail the model would actually use - it just avoids paying to upload and tokenize a much
+  larger original for zero benefit.
+- Anything bigger is shrunk to fit within that box (never upscaled) and re-encoded **preserving
+  format by content type**, specifically so drawings and line art don't get quietly degraded:
+  JPEG inputs (almost always real photos) are re-encoded at high quality (90); everything else -
+  PNG, GIF, WebP, which in practice is almost always screenshots, drawings, or line art - is
+  re-encoded losslessly as PNG instead. JPEG's block-based compression tends to blur exactly the
+  sharp edges and flat colors that kind of image relies on to look distinct from a photo, so it's
+  deliberately never used for that content.
+- If resizing fails for any reason (corrupt input, unsupported format), the original bytes are
+  classified as-is rather than failing the upload.
 
 ## Setup
 
@@ -121,16 +171,16 @@ src/
    npm install
    ```
 
-2. Create a [Vercel Blob store](https://vercel.com/docs/storage/vercel-blob) and copy its
-   read/write token. Copy `.env.example` to `.env.local`, set `BLOB_READ_WRITE_TOKEN` and a random
-   `ADMIN_SECRET` (e.g. `openssl rand -hex 32`):
+2. Copy `.env.example` to `.env.local` and set `AI_PROVIDER` plus the matching
+   `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`:
 
    ```
    cp .env.example .env.local
    ```
 
-   Either set `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` here too, or leave them blank and connect a key
-   through the running app's UI instead (see "AI connection" above).
+   That's enough to run everything locally (see "Storage" above) - `BLOB_READ_WRITE_TOKEN` and
+   `ADMIN_SECRET` are only needed if you want to test against a real Vercel Blob store or the
+   in-app Connect flow specifically.
 
 3. Run the dev server.
 
@@ -138,8 +188,7 @@ src/
    npm run dev
    ```
 
-4. Open http://localhost:3000, upload an image, and watch the agent file it (or connect a key
-   first via the AI status button if you didn't set one in `.env.local`).
+4. Open http://localhost:3000, upload an image, and watch the agent file it.
 
 ## Deploying to Vercel
 
@@ -180,3 +229,14 @@ All configuration is via environment variables (see `.env.example`):
   model can decide autonomously how many images to revisit instead of a hand-written heuristic.
 - Move reevaluation to a background job (e.g. a Vercel Cron-triggered route or a queue) so large
   batches don't run inside the request/response cycle.
+- **Batch multiple images into a single classification call, specifically for `sweepUnclassified`**
+  (pinned/deferred for now - noting the idea, not building it). `sweepUnclassified` and
+  `reevaluateBorderlineImages` already loop over several images against the same album list one
+  request at a time; asking the model to classify a handful of them in one call would amortize the
+  repeated system-prompt/album-list text across all of them instead of paying for it per image.
+  Worth doing once the Unclassified backlog is actually the cost driver, not before - it only
+  touches the shared *text* overhead (the smaller half of the bill; downscaling above already
+  addresses the bigger *image*-token half), it doesn't fit the interactive single-upload path at
+  all, and it adds real complexity correlating N outputs back to N inputs correctly if the model
+  drops or reorders one. See conversation history for the fuller cost-lever comparison (prompt
+  caching, the Anthropic Message Batches API, etc.) that led here.

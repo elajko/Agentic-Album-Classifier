@@ -200,6 +200,12 @@ dialog {
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
 }
 
+/* The `* { margin: 0 }` reset above also zeroes out the `margin: auto` browsers use to center a
+   dialog shown via showModal() - restore it so dialogs land in the middle of the screen. */
+dialog:modal {
+  margin: auto;
+}
+
 dialog::backdrop {
   background: rgba(0, 0, 0, 0.4);
 }

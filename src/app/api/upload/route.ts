@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { classifyAndFile, fileUnclassified, ProviderAuthError, sweepUnclassified } from "@/lib/classify";
+import { classifyAndFile, fileUnclassified, ProviderAuthError, ProviderCallError, sweepUnclassified } from "@/lib/classify";
 import { getConfig } from "@/lib/config";
 import { getActiveProviderKey } from "@/lib/secrets";
 import { readSchema, storeImage, writeSchema } from "@/lib/store";
@@ -89,6 +89,12 @@ export async function POST(req: NextRequest) {
             provider: err.provider,
           },
           { status: 401 }
+        );
+      }
+      if (err instanceof ProviderCallError) {
+        return NextResponse.json(
+          { error: "provider_error", message: err.message, filename, url, provider: err.provider },
+          { status: 502 }
         );
       }
       throw err;

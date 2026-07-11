@@ -24,6 +24,20 @@ export interface KeyExpiredResponse {
   provider: AiProvider;
 }
 
+/**
+ * Returned instead of UploadResponse/ApiErrorResponse when the provider rejected the call for a
+ * reason other than a bad key (insufficient credits, rate limits, model overload, ...). `message`
+ * is the provider's own explanation, not a generic paraphrase. Same orphaned-upload situation as
+ * KeyExpiredResponse - resolve it the same way, via POST /api/upload/resolve.
+ */
+export interface ProviderErrorResponse {
+  error: "provider_error";
+  message: string;
+  filename: string;
+  url: string;
+  provider: AiProvider;
+}
+
 export type ResolveAction = "file_unclassified" | "retry_classification" | "discard";
 
 export interface CreateAlbumResponse {

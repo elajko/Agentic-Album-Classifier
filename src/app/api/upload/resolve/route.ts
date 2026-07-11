@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { classifyAndFile, fileUnclassified, ProviderAuthError } from "@/lib/classify";
+import { classifyAndFile, fileUnclassified, ProviderAuthError, ProviderCallError } from "@/lib/classify";
 import { getConfig } from "@/lib/config";
 import { getActiveProviderKey } from "@/lib/secrets";
 import { deleteImage, readSchema, writeSchema } from "@/lib/store";
@@ -12,10 +12,10 @@ const ACTIONS = ["file_unclassified", "retry_classification", "discard"] as cons
 type Action = (typeof ACTIONS)[number];
 
 /**
- * Resolves an upload that's already stored in Blob but wasn't added to the schema because
- * classification failed with a rejected (expired/revoked/invalid) provider key - see the
- * `key_expired` response from POST /api/upload. The client offers three choices; this is where
- * each one is actually carried out.
+ * Resolves an upload that's already stored but wasn't added to the schema because classification
+ * failed - either the key itself was rejected (`key_expired`) or the provider call failed for some
+ * other reason (`provider_error`, e.g. insufficient credits, rate limits). Either way the client
+ * offers the same three choices; this is where each one is actually carried out.
  */
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
@@ -88,6 +88,12 @@ export async function POST(req: NextRequest) {
             provider: err.provider,
           },
           { status: 401 }
+        );
+      }
+      if (err instanceof ProviderCallError) {
+        return NextResponse.json(
+          { error: "provider_error", message: err.message, filename, url, provider: err.provider },
+          { status: 502 }
         );
       }
       throw err;

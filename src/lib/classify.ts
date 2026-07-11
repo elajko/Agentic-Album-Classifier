@@ -3,6 +3,8 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { APICallError, generateObject, type LanguageModel } from "ai";
 import { z } from "zod";
 import type { AiProvider, AppConfig } from "./config";
+import { downscaleForClassification } from "./image";
+import { getImageBytes } from "./store";
 import type { Album, ImageRecord, Schema } from "./types";
 import { slugifyAlbumName, UNCLASSIFIED_ALBUM } from "./types";
 
@@ -25,6 +27,25 @@ export class ProviderAuthError extends Error {
 
 function isAuthFailure(err: unknown): boolean {
   return APICallError.isInstance(err) && (err.statusCode === 401 || err.statusCode === 403);
+}
+
+/**
+ * Thrown for any other rejected API call (insufficient credits, rate limits, model overload,
+ * malformed request, ...). The AI SDK already extracts the provider's own human-readable message
+ * onto `APICallError.message` (e.g. "Your credit balance is too low..."), so it's carried through
+ * verbatim instead of being replaced with a generic "something went wrong" - the whole point is to
+ * tell the user what actually happened.
+ */
+export class ProviderCallError extends Error {
+  constructor(
+    public readonly provider: AiProvider,
+    detail: string,
+    cause: unknown
+  ) {
+    super(detail);
+    this.name = "ProviderCallError";
+    this.cause = cause;
+  }
 }
 
 const classificationSchema = z.object({
@@ -64,20 +85,6 @@ function getModel(config: AppConfig, apiKey: string): LanguageModel {
     : createAnthropic({ apiKey })(config.anthropicModel);
 }
 
-function inferMediaType(url: string): string {
-  const ext = url.split(".").pop()?.toLowerCase().split("?")[0];
-  switch (ext) {
-    case "png":
-      return "image/png";
-    case "webp":
-      return "image/webp";
-    case "gif":
-      return "image/gif";
-    default:
-      return "image/jpeg";
-  }
-}
-
 function describeAlbums(albums: Album[]): string {
   if (albums.length === 0) return "(none yet - this is the first image)";
 
@@ -93,12 +100,17 @@ function describeAlbums(albums: Album[]): string {
  * whether none of them fit well enough to warrant a brand-new album.
  */
 export async function classifyImage(params: {
+  filename: string;
   imageUrl: string;
   albums: Album[];
   config: AppConfig;
   apiKey: string;
 }): Promise<ClassificationResult> {
-  const { imageUrl, albums, config, apiKey } = params;
+  const { filename, imageUrl, albums, config, apiKey } = params;
+
+  const raw = await getImageBytes({ filename, url: imageUrl });
+  const { data, mediaType } = await downscaleForClassification(raw.data, raw.mediaType);
+  const filePart = { type: "file", data, mediaType } as const;
 
   try {
     const { object } = await generateObject({
@@ -121,11 +133,7 @@ export async function classifyImage(params: {
                 `Existing albums:\n${describeAlbums(albums)}\n\n` +
                 "Classify the attached image against these albums.",
             },
-            {
-              type: "file",
-              data: new URL(imageUrl),
-              mediaType: inferMediaType(imageUrl),
-            },
+            filePart,
           ],
         },
       ],
@@ -134,6 +142,7 @@ export async function classifyImage(params: {
     return object;
   } catch (err) {
     if (isAuthFailure(err)) throw new ProviderAuthError(config.aiProvider, err);
+    if (APICallError.isInstance(err)) throw new ProviderCallError(config.aiProvider, err.message, err);
     throw err;
   }
 }
@@ -204,7 +213,7 @@ export async function classifyAndFile(params: {
   const { schema, imageUrl, filename, config, apiKey } = params;
   const albums = Object.values(schema.albums).filter((a) => a.name !== UNCLASSIFIED_ALBUM);
 
-  const result = await classifyImage({ imageUrl, albums, config, apiKey });
+  const result = await classifyImage({ filename, imageUrl, albums, config, apiKey });
   const { label, createdNewAlbum } = resolveAlbumForResult(result, schema, config);
 
   const record: ImageRecord = {
@@ -258,7 +267,7 @@ export async function reevaluateBorderlineImages(params: {
   const moved: string[] = [];
 
   for (const img of borderline) {
-    const result = await classifyImage({ imageUrl: img.url, albums, config, apiKey });
+    const result = await classifyImage({ filename: img.filename, imageUrl: img.url, albums, config, apiKey });
     const candidateName = slugifyAlbumName(result.label);
 
     const isBetterFit =
@@ -323,7 +332,7 @@ export async function sweepUnclassified(params: {
 
   for (const img of batch) {
     const albums = Object.values(schema.albums).filter((a) => a.name !== UNCLASSIFIED_ALBUM);
-    const result = await classifyImage({ imageUrl: img.url, albums, config, apiKey });
+    const result = await classifyImage({ filename: img.filename, imageUrl: img.url, albums, config, apiKey });
     const { label } = resolveAlbumForResult(result, schema, config);
 
     img.label = label;
