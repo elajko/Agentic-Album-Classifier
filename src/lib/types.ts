@@ -19,6 +19,8 @@ export interface ImageRecord {
   label: string;
   confidence: number;
   uploadedAt: string;
+  /** Bytes. Optional since records written before this field existed won't have it. */
+  size?: number;
 }
 
 export interface Schema {

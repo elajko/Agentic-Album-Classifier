@@ -38,6 +38,18 @@ function asPendingResolution(data: unknown): PendingResolution | null {
   return { kind: d.error, filename: d.filename, url: d.url, provider: d.provider, message: d.message };
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unitIndex]}`;
+}
+
 const HOME = "home";
 
 export default function AlbumApp() {
@@ -63,6 +75,12 @@ export default function AlbumApp() {
   const [resolutionBusy, setResolutionBusy] = useState(false);
 
   const [hasFile, setHasFile] = useState(false);
+
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const lightboxRef = useRef<HTMLDialogElement | null>(null);
+
+  const carouselRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const [carouselOverflow, setCarouselOverflow] = useState<Record<string, boolean>>({});
 
   const loadSchema = useCallback(async () => {
     const res = await fetch("/api/images", { cache: "no-store" });
@@ -102,6 +120,13 @@ export default function AlbumApp() {
     if (!resolutionDialogOpen && dialog.open) dialog.close();
   }, [resolutionDialogOpen]);
 
+  useEffect(() => {
+    const dialog = lightboxRef.current;
+    if (!dialog) return;
+    if (lightboxIndex !== null && !dialog.open) dialog.showModal();
+    if (lightboxIndex === null && dialog.open) dialog.close();
+  }, [lightboxIndex]);
+
   const albums = useMemo(() => {
     if (!schema) return [];
     return Object.values(schema.albums).sort((a, b) => a.title.localeCompare(b.title));
@@ -118,6 +143,78 @@ export default function AlbumApp() {
     }
     return map;
   }, [schema]);
+
+  const eligibleForFeature = useMemo(
+    () => albums.filter((album) => album.name !== UNCLASSIFIED_ALBUM && (imagesByAlbum[album.name]?.length ?? 0) > 0),
+    [albums, imagesByAlbum]
+  );
+  // Keying off the album names themselves (not the array reference, which changes on every
+  // schema refetch even when nothing relevant changed) so the homepage picks don't reshuffle
+  // every time a background poll or unrelated action re-renders the page - only when the actual
+  // set of albums with photos in them changes.
+  const eligibleForFeatureKey = eligibleForFeature
+    .map((a) => a.name)
+    .sort()
+    .join(",");
+
+  const allImages = useMemo(() => (schema ? Object.values(schema.images) : []), [schema]);
+
+  const heroImage = useMemo(() => {
+    if (allImages.length === 0) return null;
+    return allImages[Math.floor(Math.random() * allImages.length)];
+    // Keyed on the image count, not `allImages` itself (a fresh array every schema refetch) -
+    // picks a new hero photo when the pool of photos actually grows or shrinks, not on every poll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allImages.length]);
+
+  const featuredAlbums = useMemo(() => {
+    const shuffled = [...eligibleForFeature];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled.slice(0, 3);
+    // Deliberately keyed on eligibleForFeatureKey (the stable name-based key above), not
+    // eligibleForFeature's array identity, which changes on every schema refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eligibleForFeatureKey]);
+
+  // A short row (few images) shouldn't show prev/next buttons that scroll nowhere - track whether
+  // each carousel's content actually overflows its box, rather than guessing from image count,
+  // since the answer depends on viewport width too.
+  useEffect(() => {
+    const observers: ResizeObserver[] = [];
+
+    for (const album of featuredAlbums) {
+      const el = carouselRefs.current[album.name];
+      if (!el) continue;
+
+      const check = () => {
+        const overflowing = el.scrollWidth > el.clientWidth + 1;
+        setCarouselOverflow((prev) => (prev[album.name] === overflowing ? prev : { ...prev, [album.name]: overflowing }));
+      };
+
+      check();
+      const observer = new ResizeObserver(check);
+      observer.observe(el);
+      observers.push(observer);
+    }
+
+    return () => {
+      for (const observer of observers) observer.disconnect();
+    };
+  }, [featuredAlbums]);
+
+  function scrollCarousel(albumName: string, direction: 1 | -1) {
+    const el = carouselRefs.current[albumName];
+    if (!el) return;
+    el.scrollBy({ left: direction * el.clientWidth * 0.8, behavior: "smooth" });
+  }
+
+  function openCarouselImage(albumName: string, index: number) {
+    setActiveAlbum(albumName);
+    setLightboxIndex(index);
+  }
 
   async function handleUpload(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -413,11 +510,33 @@ export default function AlbumApp() {
   const activeAlbumData: Album | undefined =
     activeAlbum !== HOME ? schema?.albums[activeAlbum] : undefined;
   const activeImages = imagesByAlbum[activeAlbum] ?? [];
+  const activeTotalSize = activeImages.reduce((sum, image) => sum + (image.size ?? 0), 0);
 
   // The connected key might still look "enabled" per status (it exists) even though it was just
   // rejected - force the key-entry form instead of the Disconnect/Rescan view whenever there's a
   // pending upload waiting on a replacement key.
   const forceKeyEntry = !aiStatus?.enabled || pendingResolution !== null;
+
+  function showPrevImage() {
+    setLightboxIndex((i) => (i === null || activeImages.length === 0 ? i : (i - 1 + activeImages.length) % activeImages.length));
+  }
+
+  function showNextImage() {
+    setLightboxIndex((i) => (i === null || activeImages.length === 0 ? i : (i + 1) % activeImages.length));
+  }
+
+  function handleLightboxKeyDown(e: React.KeyboardEvent<HTMLDialogElement>) {
+    if (e.key === "ArrowLeft") showPrevImage();
+    if (e.key === "ArrowRight") showNextImage();
+  }
+
+  // Native <dialog> has no built-in "click outside to close" - detect a click that landed on the
+  // dialog element itself (the backdrop area) rather than on any of its children.
+  function handleLightboxBackdropClick(e: React.MouseEvent<HTMLDialogElement>) {
+    if (e.target === e.currentTarget) setLightboxIndex(null);
+  }
+
+  const lightboxImage = lightboxIndex !== null ? activeImages[lightboxIndex] : undefined;
 
   return (
     <>
@@ -473,32 +592,110 @@ export default function AlbumApp() {
 
       <div id="browse-area">
         {activeAlbum === HOME && (
-          <div className="empty-state">
-            <h1>Welcome to your gallery!</h1>
-            <p>
-              Upload an image using the picker above. An AI agent looks at it, compares it against
-              your existing albums, and either files it into the best match or invents a brand-new
-              album on the spot if nothing fits well.
-            </p>
-            <p>
-              You can also pre-create an album yourself with &ldquo;+ New album&rdquo; &mdash; the agent will
-              immediately re-check any borderline images to see if they belong there instead.
-            </p>
-            <p>
-              Classification needs an Anthropic or OpenAI key connected via the AI status button
-              above. Until then, uploads are kept safe in an &ldquo;Unclassified&rdquo; album and get
-              sorted automatically once a key is connected.
-            </p>
+          <div className="hero">
+            <div className="empty-state hero-text">
+              <h1>Welcome to your gallery!</h1>
+              <p>
+                Upload an image using the picker above. An AI agent looks at it, compares it against
+                your existing albums, and either files it into the best match or invents a brand-new
+                album on the spot if nothing fits well.
+              </p>
+              <p>
+                You can also pre-create an album yourself with &ldquo;+ New album&rdquo; &mdash; the agent will
+                immediately re-check any borderline images to see if they belong there instead.
+              </p>
+              <p>
+                Classification needs an Anthropic or OpenAI key connected via the AI status button
+                above. Until then, uploads are kept safe in an &ldquo;Unclassified&rdquo; album and get
+                sorted automatically once a key is connected.
+              </p>
+            </div>
+            {heroImage && (
+              <div
+                className="hero-image"
+                style={{
+                  backgroundImage: `linear-gradient(to left, rgba(255,255,255,0) 0%, rgba(255,255,255,0.9) 50%, rgba(255,255,255,1) 80%), url(${heroImage.url})`,
+                }}
+                role="img"
+                aria-label={`Featured photo: ${heroImage.filename}`}
+              />
+            )}
+          </div>
+        )}
+
+        {activeAlbum === HOME && featuredAlbums.length > 0 && (
+          <div className="featured-albums">
+            {featuredAlbums.map((album) => {
+              const images = imagesByAlbum[album.name] ?? [];
+              return (
+                <section className="carousel-section" key={album.name}>
+                  <div className="carousel-header">
+                    <div>
+                      <h3>
+                        <button
+                          type="button"
+                          className="carousel-title-link"
+                          onClick={() => setActiveAlbum(album.name)}
+                        >
+                          {album.title}
+                        </button>
+                      </h3>
+                      <p className="album-meta">
+                        {images.length} {images.length === 1 ? "image" : "images"}
+                      </p>
+                    </div>
+                    {carouselOverflow[album.name] && (
+                      <div className="carousel-controls">
+                        <button
+                          type="button"
+                          aria-label={`Scroll ${album.title} left`}
+                          onClick={() => scrollCarousel(album.name, -1)}
+                        >
+                          ‹
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Scroll ${album.title} right`}
+                          onClick={() => scrollCarousel(album.name, 1)}
+                        >
+                          ›
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="carousel" ref={(el) => { carouselRefs.current[album.name] = el; }}>
+                    {images.map((image, index) => (
+                      <button
+                        type="button"
+                        className="carousel-item"
+                        key={image.filename}
+                        onClick={() => openCarouselImage(album.name, index)}
+                        aria-label={`Open ${image.filename}`}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element -- remote Blob URLs, not worth next/image config */}
+                        <img src={image.url} alt={image.filename} loading="lazy" />
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              );
+            })}
           </div>
         )}
 
         {activeAlbum !== HOME && (
           <div>
             <div className="album-heading">
-              <h2>
-                {activeAlbumData?.title ?? activeAlbum}{" "}
-                <small>{activeAlbumData?.description}</small>
-              </h2>
+              <div>
+                <h2>{activeAlbumData?.title ?? activeAlbum}</h2>
+                {activeAlbumData?.description && (
+                  <p className="album-description">{activeAlbumData.description}</p>
+                )}
+                <p className="album-meta">
+                  {activeImages.length} {activeImages.length === 1 ? "image" : "images"}
+                  {activeImages.length > 0 && ` · ${formatBytes(activeTotalSize)}`}
+                </p>
+              </div>
               {activeImages.length === 0 && activeAlbum !== UNCLASSIFIED_ALBUM && (
                 <button type="button" className="subtle" onClick={() => handleDeleteAlbum(activeAlbum)}>
                   Delete empty album
@@ -510,8 +707,21 @@ export default function AlbumApp() {
               <p className="empty-state">No images in this album yet.</p>
             ) : (
               <div className="gallery">
-                {activeImages.map((image) => (
-                  <figure className="image-cel" key={image.filename}>
+                {activeImages.map((image, index) => (
+                  <figure
+                    className="image-cel"
+                    key={image.filename}
+                    tabIndex={0}
+                    role="button"
+                    aria-label={`Open ${image.filename} in lightbox`}
+                    onClick={() => setLightboxIndex(index)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setLightboxIndex(index);
+                      }
+                    }}
+                  >
                     <div className="thumb">
                       {/* eslint-disable-next-line @next/next/no-img-element -- remote Blob URLs, not worth next/image config */}
                       <img src={image.url} alt={image.filename} loading="lazy" />
@@ -701,6 +911,51 @@ export default function AlbumApp() {
             Connect a different key
           </button>
         </div>
+      </dialog>
+
+      <dialog
+        ref={lightboxRef}
+        className="lightbox"
+        onClose={() => setLightboxIndex(null)}
+        onClick={handleLightboxBackdropClick}
+        onKeyDown={handleLightboxKeyDown}
+      >
+        {lightboxImage && lightboxIndex !== null && (
+          <div className="lightbox-frame">
+            {/* eslint-disable-next-line @next/next/no-img-element -- same remote URL as the thumbnail, just unclamped */}
+            <img src={lightboxImage.url} alt={lightboxImage.filename} />
+            <div className="lightbox-caption">
+              <span>{lightboxImage.filename}</span>
+              <span>
+                {lightboxImage.label === UNCLASSIFIED_ALBUM
+                  ? "pending"
+                  : `${Math.round(lightboxImage.confidence * 100)}%`}
+              </span>
+            </div>
+            {activeImages.length > 1 && (
+              <div className="lightbox-toolbar">
+                <button type="button" className="lightbox-nav prev" aria-label="Previous image" onClick={showPrevImage}>
+                  ‹
+                </button>
+                <span className="lightbox-counter">
+                  {lightboxIndex + 1} / {activeImages.length}
+                </span>
+                <button type="button" className="lightbox-nav next" aria-label="Next image" onClick={showNextImage}>
+                  ›
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        <button
+          type="button"
+          className="lightbox-close"
+          aria-label="Close"
+          onClick={() => setLightboxIndex(null)}
+        >
+          ✕
+        </button>
       </dialog>
     </>
   );

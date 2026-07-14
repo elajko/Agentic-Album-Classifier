@@ -54,3 +54,14 @@ export async function getImageBytes(params: { filename: string; url: string }): 
   const data = Buffer.from(await res.arrayBuffer());
   return { data, mediaType };
 }
+
+/**
+ * Byte size of an already-stored image. Only needed when a route doesn't already have the
+ * original File object (and its free `.size`) in hand - see upload/resolve/route.ts, which
+ * resolves an image that was stored by an earlier request.
+ */
+export async function getImageSize(params: { filename: string; url: string }): Promise<number> {
+  return isLocalMode()
+    ? localBackend.getImageSize(`images/${params.filename}`)
+    : blobBackend.getImageSize(params.url);
+}

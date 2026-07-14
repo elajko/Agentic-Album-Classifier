@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createEmptySchema, type Schema } from "../types";
 
@@ -74,4 +74,10 @@ export async function deleteImage(url: string): Promise<void> {
 export async function readImageBytes(pathname: string): Promise<Buffer> {
   const filename = pathname.replace(/^images\//, "");
   return readFile(safeImagePath(filename));
+}
+
+export async function getImageSize(pathname: string): Promise<number> {
+  const filename = pathname.replace(/^images\//, "");
+  const stats = await stat(safeImagePath(filename));
+  return stats.size;
 }

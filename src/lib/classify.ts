@@ -209,8 +209,9 @@ export async function classifyAndFile(params: {
   filename: string;
   config: AppConfig;
   apiKey: string;
+  size: number;
 }): Promise<{ schema: Schema; label: string; createdNewAlbum: boolean }> {
-  const { schema, imageUrl, filename, config, apiKey } = params;
+  const { schema, imageUrl, filename, config, apiKey, size } = params;
   const albums = Object.values(schema.albums).filter((a) => a.name !== UNCLASSIFIED_ALBUM);
 
   const result = await classifyImage({ filename, imageUrl, albums, config, apiKey });
@@ -222,6 +223,7 @@ export async function classifyAndFile(params: {
     label,
     confidence: result.confidence,
     uploadedAt: new Date().toISOString(),
+    size,
   };
 
   schema.images[filename] = record;
@@ -301,7 +303,7 @@ export function ensureUnclassifiedAlbum(schema: Schema): void {
 }
 
 /** Files an image into the Unclassified bucket without calling the AI provider. */
-export function fileUnclassified(schema: Schema, imageUrl: string, filename: string): void {
+export function fileUnclassified(schema: Schema, imageUrl: string, filename: string, size: number): void {
   ensureUnclassifiedAlbum(schema);
 
   schema.images[filename] = {
@@ -310,6 +312,7 @@ export function fileUnclassified(schema: Schema, imageUrl: string, filename: str
     label: UNCLASSIFIED_ALBUM,
     confidence: 0,
     uploadedAt: new Date().toISOString(),
+    size,
   };
 }
 

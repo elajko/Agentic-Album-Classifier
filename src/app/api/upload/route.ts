@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
     const active = await getActiveProviderKey(config.aiProvider);
 
     if (!active) {
-      fileUnclassified(schema, url, filename);
+      fileUnclassified(schema, url, filename, file.size);
       await writeSchema(schema);
       return NextResponse.json({
         ok: true,
@@ -60,7 +60,14 @@ export async function POST(req: NextRequest) {
     // classification fails because the key itself is bad, it stays that way (unregistered, not
     // shown anywhere) until the client tells us how to resolve it via /api/upload/resolve.
     try {
-      const result = await classifyAndFile({ schema, imageUrl: url, filename, config, apiKey: active.key });
+      const result = await classifyAndFile({
+        schema,
+        imageUrl: url,
+        filename,
+        config,
+        apiKey: active.key,
+        size: file.size,
+      });
       await writeSchema(schema);
 
       try {

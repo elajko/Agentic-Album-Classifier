@@ -1,7 +1,12 @@
-@import url("https://fonts.googleapis.com/css2?family=PT+Sans+Narrow:wght@400;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
 
 :root {
   --pink: #ff42ba;
+  --ink: #171717;
+  --muted: #6b6b6b;
+  --faint: #9a9a9a;
+  --border: #e9e9e9;
+  --surface: #fafafa;
 }
 
 * {
@@ -17,9 +22,10 @@ body {
 }
 
 body {
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  color: #171717;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: var(--ink);
   background: #ffffff;
+  -webkit-font-smoothing: antialiased;
 }
 
 a {
@@ -29,42 +35,57 @@ a {
 
 h1,
 h2 {
-  font-family: "PT Sans Narrow", sans-serif;
+  font-weight: 800;
+  letter-spacing: -0.02em;
 }
 
 h1 {
-  font-size: 3em;
+  font-size: 2.75em;
+  line-height: 1.1;
 }
 
 h2 {
-  border-bottom: 1px solid #ccc;
-  font-weight: 400;
-  font-size: 1.8em;
-  margin-bottom: 1rem;
+  font-weight: 700;
+  font-size: 1.5em;
+  letter-spacing: -0.01em;
 }
 
 .image-cel {
-  color: grey;
+  color: var(--muted);
   margin: 0;
+  break-inside: avoid;
+  display: inline-block;
+  width: 100%;
+  cursor: pointer;
 }
 
 .image-cel .thumb {
-  aspect-ratio: 1.618;
   width: 100%;
-  border-radius: 4px;
+  border-radius: 10px;
   overflow: hidden;
-  background: #f0f0f0;
+  background: var(--surface);
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.image-cel:hover .thumb {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  transform: translateY(-2px);
+}
+
+.image-cel:focus-visible {
+  outline: 2px solid var(--pink);
+  outline-offset: 4px;
+  border-radius: 10px;
 }
 
 .image-cel img {
-  object-fit: cover;
   width: 100%;
-  height: 100%;
+  height: auto;
   display: block;
 }
 
 .image-cel figcaption {
-  padding-top: 0.5em;
+  padding-top: 0.6em;
   font-size: 0.8em;
   display: flex;
   justify-content: space-between;
@@ -72,14 +93,36 @@ h2 {
 }
 
 .confidence {
-  color: #aaa;
+  color: var(--faint);
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .gallery {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(33%, 300px), 1fr));
-  gap: 1rem;
+  columns: 4;
+  column-gap: 1.25rem;
+}
+
+@media (max-width: 1100px) {
+  .gallery {
+    columns: 3;
+  }
+}
+
+@media (max-width: 760px) {
+  .gallery {
+    columns: 2;
+  }
+}
+
+@media (max-width: 480px) {
+  .gallery {
+    columns: 1;
+  }
+}
+
+.image-cel {
+  margin-bottom: 1.25rem;
 }
 
 header {
@@ -88,15 +131,16 @@ header {
   display: flex;
   gap: 1em;
   align-items: center;
-  background: white;
-  padding: 1em;
-  border-bottom: 1px solid #eee;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(10px);
+  padding: 1em 2em;
+  border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
   z-index: 10;
 }
 
 #browse-area {
-  padding: 0 2em 4em;
+  padding: 2em 2em 4em;
 }
 
 .status-message {
@@ -117,35 +161,49 @@ input[type="text"],
 input[type="password"],
 textarea,
 input[type="file"]::file-selector-button {
-  background: #e2e2e2;
-  padding: 0.5em 1em;
-  border: 0;
-  border-radius: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 0.55em 1.1em;
+  border-radius: 999px;
   cursor: pointer;
   font-family: inherit;
-  font-size: 1em;
+  font-size: 0.9em;
+  color: var(--ink);
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+
+textarea {
+  border-radius: 12px;
 }
 
 input[type="text"],
 input[type="password"],
 textarea {
   cursor: text;
-  border: 1px solid #ddd;
   background: white;
 }
 
+input[type="text"]:focus,
+input[type="password"]:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--pink);
+}
+
 .ai-badge {
-  font-size: 0.8em;
-  font-weight: 700;
+  font-size: 0.78em;
+  font-weight: 600;
+  border: none;
 }
 
 .ai-badge.connected {
-  background: #d9f2e1;
+  background: #e3f7ea;
   color: #1b8a3d;
 }
 
 .ai-badge.disconnected {
-  background: #f2e6d9;
+  background: #fbeee0;
   color: #8a5a1b;
 }
 
@@ -154,50 +212,204 @@ textarea {
   text-decoration: underline;
 }
 
-button:hover,
+button:hover:not(:disabled),
+select:hover,
 input[type="file"]::file-selector-button:hover {
-  filter: brightness(90%);
+  border-color: #d5d5d5;
+  background: #f2f2f2;
 }
 
 button[type="submit"],
 button.primary {
   background: var(--pink);
-  font-weight: 700;
+  border-color: var(--pink);
+  font-weight: 600;
   color: white;
 }
 
+button[type="submit"]:hover:not(:disabled),
+button.primary:hover:not(:disabled) {
+  background: #e63aa8;
+  border-color: #e63aa8;
+}
+
 button:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
 button.subtle {
   background: transparent;
-  color: #999;
-  padding: 0.25em 0.5em;
+  border-color: transparent;
+  color: var(--faint);
+  padding: 0.55em 0.75em;
+}
+
+button.subtle:hover:not(:disabled) {
+  background: var(--surface);
+  border-color: transparent;
 }
 
 .separator {
-  height: 2em;
-  border-left: 1px solid #ccc;
+  height: 1.6em;
+  border-left: 1px solid var(--border);
+}
+
+/*
+ * Full-bleed: cancels out #browse-area's padding (2em top, 2em sides) so this reaches the actual
+ * viewport edges and sits flush against the header, rather than being inset like everything else.
+ * position:relative here + position:absolute on .hero-image (inset:0) is also what keeps the
+ * *height* purely text-driven: an absolutely positioned child contributes nothing to its parent's
+ * height, so .hero's height is set entirely by .hero-text's normal-flow content, and the image
+ * then just fills whatever that height turns out to be.
+ */
+.hero {
+  position: relative;
+  margin: -2em -2em 0;
+  overflow: hidden;
+}
+
+.hero-text {
+  position: relative;
+  z-index: 1;
+  padding: 3em 2em;
+}
+
+.hero-image {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+@media (max-width: 860px) {
+  .hero-image {
+    display: none;
+  }
 }
 
 .empty-state {
-  color: #777;
+  color: var(--muted);
   max-width: 40em;
+  line-height: 1.6;
 }
 
 .empty-state p {
-  margin-top: 0.75em;
+  margin-top: 0.85em;
+}
+
+.featured-albums {
+  display: flex;
+  flex-direction: column;
+  gap: 2.5em;
+  margin-top: 3em;
+}
+
+.carousel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1em;
+  margin-bottom: 0.85em;
+}
+
+.carousel-header h3 {
+  font-size: 1em;
+  font-weight: 400;
+}
+
+.carousel-title-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  border-radius: 0;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 1.15em;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.carousel-title-link:hover {
+  background: none;
+  color: var(--pink);
+}
+
+.carousel-controls {
+  display: flex;
+  gap: 0.5em;
+  flex-shrink: 0;
+}
+
+.carousel-controls button {
+  width: 2.25em;
+  height: 2.25em;
+  padding: 0;
+  border-radius: 999px;
+  font-size: 1.1em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.carousel {
+  display: flex;
+  gap: 1em;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding-bottom: 0.25em;
+  scrollbar-width: none;
+  justify-content: flex-start;
+}
+
+.carousel::-webkit-scrollbar {
+  display: none;
+}
+
+.carousel-item {
+  /* Fixed height, auto width: every thumbnail keeps its own natural aspect ratio (no cropping)
+     while lining up along the same row height, like a filmstrip. */
+  flex: 0 0 auto;
+  height: clamp(140px, 18vw, 200px);
+  width: auto;
+  border-radius: 10px;
+  overflow: hidden;
+  scroll-snap-align: start;
+  cursor: pointer;
+  border: 0;
+  padding: 0;
+  background: var(--surface);
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.carousel-item:hover {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  transform: translateY(-2px);
+}
+
+.carousel-item:focus-visible {
+  outline: 2px solid var(--pink);
+  outline-offset: 3px;
+}
+
+.carousel-item img {
+  height: 100%;
+  width: auto;
+  display: block;
 }
 
 dialog {
   border: 0;
-  border-radius: 8px;
-  padding: 1.5em;
+  border-radius: 16px;
+  padding: 1.75em;
   max-width: 28em;
   width: 90%;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.18);
+}
+
+dialog h2 {
+  margin-bottom: 0.85em;
 }
 
 /* The `* { margin: 0 }` reset above also zeroes out the `margin: auto` browsers use to center a
@@ -207,20 +419,21 @@ dialog:modal {
 }
 
 dialog::backdrop {
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(20, 20, 20, 0.55);
+  backdrop-filter: blur(2px);
 }
 
 .form-field {
   display: flex;
   flex-direction: column;
-  gap: 0.35em;
-  margin-bottom: 1em;
+  gap: 0.4em;
+  margin-bottom: 1.1em;
 }
 
 .form-field label {
-  font-size: 0.85em;
-  font-weight: 700;
-  color: #555;
+  font-size: 0.82em;
+  font-weight: 600;
+  color: var(--muted);
 }
 
 .dialog-actions {
@@ -231,13 +444,138 @@ dialog::backdrop {
 
 .album-heading {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 1em;
+  margin-bottom: 1.5em;
 }
 
-.album-heading small {
-  font-size: 0.5em;
-  color: #999;
-  font-weight: 400;
+.album-description {
+  color: var(--muted);
+  font-size: 0.95em;
+  line-height: 1.5;
+  max-width: 42em;
+  margin-top: 0.3em;
+}
+
+.album-meta {
+  color: var(--faint);
+  font-size: 0.82em;
+  margin-top: 0.6em;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * Lightbox: a full-bleed dialog variant, distinct from the small form dialogs above. The dialog
+ * element itself is sized to the whole viewport (not just its content) specifically so that
+ * clicking the dark area works: a click that lands on the dialog element itself (not inside
+ * .lightbox-frame) is the empty backdrop area and closes the lightbox. If the dialog were only as
+ * big as its content, most of the visible "dark area" would actually be the ::backdrop
+ * pseudo-element instead, which JS can't detect clicks on at all.
+ */
+dialog.lightbox {
+  width: 100vw;
+  height: 100vh;
+  max-width: 100vw;
+  max-height: 100vh;
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+dialog.lightbox::backdrop {
+  background: rgba(10, 10, 10, 0.92);
+}
+
+.lightbox-frame {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1em;
+  max-width: 92vw;
+  max-height: 90vh;
+}
+
+.lightbox-frame img {
+  display: block;
+  /* A flat width/height + object-fit (rather than max-width/max-height + width/height:auto) means
+     a low-res image gets scaled UP to match the size other images display at, not just scaled
+     down when it's too big - purely a CSS display size, no server-side upscaling of the file. */
+  width: 92vw;
+  height: 74vh;
+  max-width: 92vw;
+  max-height: 74vh;
+  object-fit: contain;
+  border-radius: 8px;
+  /* drop-shadow (not box-shadow) follows the visible image content itself, not the element's
+     box - matters here since object-fit: contain can letterbox images whose aspect ratio doesn't
+     match the box, and a box-shadow would otherwise show up as a rectangle around empty space. */
+  filter: drop-shadow(0 20px 60px rgba(0, 0, 0, 0.5));
+}
+
+.lightbox-caption {
+  display: flex;
+  justify-content: center;
+  gap: 1em;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.85em;
+}
+
+.lightbox-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1.25em;
+}
+
+.lightbox-counter {
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 0.9em;
+  font-variant-numeric: tabular-nums;
+  min-width: 3.5em;
+  text-align: center;
+}
+
+.lightbox-close,
+.lightbox-nav {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: white;
+  border-radius: 999px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease;
+}
+
+.lightbox-close:hover,
+.lightbox-nav:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.lightbox-close {
+  position: fixed;
+  top: 1.5em;
+  right: 1.5em;
+  width: 2.75em;
+  height: 2.75em;
+  font-size: 1.1em;
+}
+
+.lightbox-nav {
+  width: 2.75em;
+  height: 2.75em;
+  font-size: 1.3em;
+}
+
+@media (max-width: 700px) {
+  .lightbox-close {
+    top: 0.75em;
+    right: 0.75em;
+  }
 }

@@ -1,4 +1,4 @@
-import { put, get, del } from "@vercel/blob";
+import { put, get, del, head } from "@vercel/blob";
 import { createEmptySchema, type Schema } from "../types";
 
 const SCHEMA_PATHNAME = "schema.json";
@@ -49,4 +49,9 @@ export async function storeImage(
 
 export async function deleteImage(url: string): Promise<void> {
   await del(url);
+}
+
+export async function getImageSize(url: string): Promise<number> {
+  const meta = await head(url);
+  return meta.size;
 }

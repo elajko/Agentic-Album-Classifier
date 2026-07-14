@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { classifyAndFile, fileUnclassified, ProviderAuthError, ProviderCallError } from "@/lib/classify";
 import { getConfig } from "@/lib/config";
 import { getActiveProviderKey } from "@/lib/secrets";
-import { deleteImage, readSchema, writeSchema } from "@/lib/store";
+import { deleteImage, getImageSize, readSchema, writeSchema } from "@/lib/store";
 import { UNCLASSIFIED_ALBUM } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -49,8 +49,12 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // The original upload already stored the file - no fresh File object to read `.size` off of
+    // here, unlike a brand-new upload, so it has to be looked up from wherever it landed.
+    const size = await getImageSize({ filename, url });
+
     if (action === "file_unclassified") {
-      fileUnclassified(schema, url, filename);
+      fileUnclassified(schema, url, filename, size);
       await writeSchema(schema);
       return NextResponse.json({
         ok: true,
@@ -68,7 +72,7 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-      const result = await classifyAndFile({ schema, imageUrl: url, filename, config, apiKey: active.key });
+      const result = await classifyAndFile({ schema, imageUrl: url, filename, config, apiKey: active.key, size });
       await writeSchema(schema);
       return NextResponse.json({
         ok: true,
